@@ -1,16 +1,48 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const OPENAI_KEY_STORAGE = "aim_openai_api_key";
+
+export function getStoredApiKey(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(OPENAI_KEY_STORAGE) || "";
+}
+
+export function setStoredApiKey(key: string) {
+  if (typeof window === "undefined") return;
+  if (key) {
+    localStorage.setItem(OPENAI_KEY_STORAGE, key);
+  } else {
+    localStorage.removeItem(OPENAI_KEY_STORAGE);
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {};
+  if (options?.headers) {
+    Object.assign(headers, options.headers);
+  }
+  if (apiKey) {
+    headers["X-OpenAI-Key"] = apiKey;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      ...options?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API error ${res.status}: ${body}`);
   }
+  return res.json();
+}
+
+export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/settings/validate-key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
   return res.json();
 }
 

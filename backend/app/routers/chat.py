@@ -1,7 +1,7 @@
 """AI Coach chat endpoint with function calling."""
 
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -262,6 +262,7 @@ async def chat(
     session_id: str,
     request: ChatRequest,
     db: AsyncSession = Depends(get_db),
+    x_openai_key: str | None = Header(None),
 ):
     """Send a message to the AI driving coach."""
     context = await _build_session_context(session_id, db)
@@ -275,6 +276,7 @@ async def chat(
         conversation_history=history,
         session_context=context,
         tool_executor=executor,
+        api_key=x_openai_key or None,
     )
 
     db.add(ChatMessageRecord(
@@ -312,7 +314,11 @@ async def chat_history(session_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/coaching-report")
-async def generate_report(session_id: str, db: AsyncSession = Depends(get_db)):
+async def generate_report(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    x_openai_key: str | None = Header(None),
+):
     """Generate an AI coaching report for the session."""
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -376,7 +382,7 @@ async def generate_report(session_id: str, db: AsyncSession = Depends(get_db)):
         "advanced_metrics_best_lap": _convert_result_to_mph(advanced) if advanced else None,
     }
 
-    report = await generate_coaching_report(summary_data)
+    report = await generate_coaching_report(summary_data, api_key=x_openai_key or None)
 
     session.coaching_report_json = report
     await db.commit()

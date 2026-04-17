@@ -278,16 +278,19 @@ def _format_session_times(data: dict) -> dict:
     return d
 
 
-def _get_client() -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+def _get_client(api_key: str | None = None) -> AsyncOpenAI:
+    key = api_key or settings.openai_api_key
+    if not key:
+        raise ValueError("OpenAI API key not configured. Please set it in Settings.")
+    return AsyncOpenAI(api_key=key)
 
 
-async def generate_coaching_report(session_summary: dict) -> dict:
+async def generate_coaching_report(session_summary: dict, api_key: str | None = None) -> dict:
     """Generate an automatic coaching report from session analysis data.
 
     This is Mode 1 -- called after file upload and analysis, no user question needed.
     """
-    client = _get_client()
+    client = _get_client(api_key)
 
     formatted_summary = _format_session_times(session_summary)
 
@@ -341,13 +344,13 @@ Focus on the biggest time gains first. Be specific about turn numbers/names and 
         }
 
 
-async def generate_comparison_coaching(comparison_data: dict) -> dict:
+async def generate_comparison_coaching(comparison_data: dict, api_key: str | None = None) -> dict:
     """Generate AI coaching analysis explaining why one lap is faster than another.
 
     Takes the full comparison result (delta trace summary, corner-by-corner breakdown)
     and produces actionable coaching insights.
     """
-    client = _get_client()
+    client = _get_client(api_key)
 
     # Summarize the delta trace to key sections instead of sending all 500 points
     trace = comparison_data.get("delta_trace", [])
@@ -450,6 +453,7 @@ async def chat_with_coach(
     conversation_history: list[dict],
     session_context: dict,
     tool_executor,
+    api_key: str | None = None,
 ) -> dict:
     """Handle a conversational chat message with function calling.
 
@@ -462,8 +466,9 @@ async def chat_with_coach(
         conversation_history: Previous messages in the conversation
         session_context: Brief session metadata for the system prompt
         tool_executor: Async callable that executes tool functions and returns results
+        api_key: Optional OpenAI API key override
     """
-    client = _get_client()
+    client = _get_client(api_key)
 
     context_str = json.dumps(session_context, indent=2)
     system = (

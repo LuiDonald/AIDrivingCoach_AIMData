@@ -10,8 +10,11 @@ from app.core.config import settings
 from app.models.schemas import TirePhotoResult, CarPhotoResult, PhotoType
 
 
-def _get_client() -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+def _get_client(api_key: str | None = None) -> AsyncOpenAI:
+    key = api_key or settings.openai_api_key
+    if not key:
+        raise ValueError("OpenAI API key not configured. Please set it in Settings.")
+    return AsyncOpenAI(api_key=key)
 
 
 def _encode_image(file_path: str) -> str:
@@ -51,9 +54,9 @@ Return a JSON object with these fields:
 Only return the JSON object, no other text."""
 
 
-async def analyze_tire_photo(file_path: str) -> TirePhotoResult:
+async def analyze_tire_photo(file_path: str, api_key: str | None = None) -> TirePhotoResult:
     """Analyze a tire photo using GPT-4o Vision."""
-    client = _get_client()
+    client = _get_client(api_key)
     b64 = _encode_image(file_path)
     media = _image_media_type(file_path)
 
@@ -85,9 +88,9 @@ async def analyze_tire_photo(file_path: str) -> TirePhotoResult:
         return TirePhotoResult(condition_summary=text)
 
 
-async def analyze_car_photo(file_path: str) -> CarPhotoResult:
+async def analyze_car_photo(file_path: str, api_key: str | None = None) -> CarPhotoResult:
     """Analyze a car setup photo using GPT-4o Vision."""
-    client = _get_client()
+    client = _get_client(api_key)
     b64 = _encode_image(file_path)
     media = _image_media_type(file_path)
 
@@ -119,10 +122,10 @@ async def analyze_car_photo(file_path: str) -> CarPhotoResult:
         return CarPhotoResult(notable_features=[text])
 
 
-async def analyze_photo(file_path: str, photo_type: PhotoType) -> dict:
+async def analyze_photo(file_path: str, photo_type: PhotoType, api_key: str | None = None) -> dict:
     """Route photo analysis based on type."""
     if photo_type.value.startswith("tire_"):
-        result = await analyze_tire_photo(file_path)
+        result = await analyze_tire_photo(file_path, api_key=api_key)
     else:
-        result = await analyze_car_photo(file_path)
+        result = await analyze_car_photo(file_path, api_key=api_key)
     return result.model_dump()

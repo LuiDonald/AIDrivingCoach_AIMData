@@ -1,7 +1,7 @@
 """Analysis endpoints: speed traces, g-g diagram, corners, track map, improvement suggestions."""
 
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -266,6 +266,7 @@ async def compare_coaching(
     lap_a: int = Query(...),
     lap_b: int = Query(...),
     db: AsyncSession = Depends(get_db),
+    x_openai_key: str | None = Header(None),
 ):
     """Generate AI coaching analysis for a same-session lap comparison."""
     session, parsed, laps, corners = await _load_session_data(session_id, db)
@@ -297,7 +298,7 @@ async def compare_coaching(
     result["advanced_metrics_lap_a"] = adv_a
     result["advanced_metrics_lap_b"] = adv_b
 
-    coaching = await generate_comparison_coaching(result)
+    coaching = await generate_comparison_coaching(result, api_key=x_openai_key or None)
     return coaching
 
 
@@ -680,12 +681,12 @@ async def cross_session_coaching(
     session_b: str = Query(...),
     lap_b: int = Query(...),
     db: AsyncSession = Depends(get_db),
+    x_openai_key: str | None = Header(None),
 ):
     """Generate AI coaching analysis for a cross-session lap comparison."""
-    # Reuse the compare endpoint logic, then feed into AI
     compare_response = await cross_session_compare(
         session_a=session_a, lap_a=lap_a,
         session_b=session_b, lap_b=lap_b,
         db=db,
     )
-    return await generate_comparison_coaching(compare_response)
+    return await generate_comparison_coaching(compare_response, api_key=x_openai_key or None)

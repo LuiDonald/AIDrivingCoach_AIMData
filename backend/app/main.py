@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import sessions, analysis, chat, photos
+import app.routers.settings as settings_router
 
 
 @asynccontextmanager
@@ -34,6 +35,7 @@ app.include_router(analysis.router)
 app.include_router(analysis.cross_router)
 app.include_router(chat.router)
 app.include_router(photos.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/api/health")

@@ -4,7 +4,7 @@ import uuid
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -23,6 +23,7 @@ async def upload_and_analyze_photo(
     photo_type: PhotoType = Form(...),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    x_openai_key: str | None = Header(None),
 ):
     """Upload a photo (tire or car) and analyze it with GPT-4o Vision."""
     result = await db.execute(select(Session).where(Session.id == session_id))
@@ -43,7 +44,7 @@ async def upload_and_analyze_photo(
         shutil.copyfileobj(file.file, f)
 
     try:
-        analysis = await analyze_photo(str(file_path), photo_type)
+        analysis = await analyze_photo(str(file_path), photo_type, api_key=x_openai_key or None)
     except Exception as e:
         analysis = {"error": str(e)}
 
