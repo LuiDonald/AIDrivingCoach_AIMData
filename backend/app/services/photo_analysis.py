@@ -1,4 +1,4 @@
-"""Photo analysis using GPT-4o Vision for tire wear and car setup detection."""
+"""Photo analysis using GPT-5.4 Vision for tire wear and car setup detection."""
 
 import base64
 import json
@@ -58,7 +58,7 @@ async def analyze_tire_photo(file_path: str) -> TirePhotoResult:
     media = _image_media_type(file_path)
 
     response = await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.4",
         messages=[
             {
                 "role": "user",
@@ -71,7 +71,7 @@ async def analyze_tire_photo(file_path: str) -> TirePhotoResult:
                 ],
             }
         ],
-        max_tokens=500,
+        max_completion_tokens=500,
         temperature=0.2,
     )
 
@@ -92,7 +92,7 @@ async def analyze_car_photo(file_path: str) -> CarPhotoResult:
     media = _image_media_type(file_path)
 
     response = await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.4",
         messages=[
             {
                 "role": "user",
@@ -105,7 +105,7 @@ async def analyze_car_photo(file_path: str) -> CarPhotoResult:
                 ],
             }
         ],
-        max_tokens=500,
+        max_completion_tokens=500,
         temperature=0.2,
     )
 

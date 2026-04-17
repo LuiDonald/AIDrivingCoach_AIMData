@@ -7,10 +7,12 @@ from dataclasses import dataclass, field
 
 
 KNOWN_CHANNEL_ALIASES = {
-    # Speed -- AIM CSV exports in mph, XRK in kph
-    "GPS Speed": "speed_kph",
+    # Speed -- units vary by source:
+    #   XRK/XRZ: GPS Speed is m/s, SpeedAverage/WheelSpd are kph
+    #   AIM CSV: GPS_Speed is mph
+    "GPS Speed": "gps_speed_ms",
     "GPS_Speed": "speed_mph",
-    "SpeedAverage": "speed_avg_mph",
+    "SpeedAverage": "speed_avg_kph",
     # GPS position
     "GPS Latitude": "gps_lat",
     "GPS_Latitude": "gps_lat",
@@ -66,11 +68,11 @@ KNOWN_CHANNEL_ALIASES = {
     # Steering
     "Steering Angle": "steering_angle",
     "SteerAngle": "steering_angle",
-    # Wheel speeds (mph in AIM CSV)
-    "WheelSpdFL": "wheel_speed_fl_mph",
-    "WheelSpdFR": "wheel_speed_fr_mph",
-    "WheelSpdRL": "wheel_speed_rl_mph",
-    "WheelSpdRR": "wheel_speed_rr_mph",
+    # Wheel speeds (kph in XRK, mph in AIM CSV — CSV path handles conversion)
+    "WheelSpdFL": "wheel_speed_fl_kph",
+    "WheelSpdFR": "wheel_speed_fr_kph",
+    "WheelSpdRL": "wheel_speed_rl_kph",
+    "WheelSpdRR": "wheel_speed_rr_kph",
     # Temperatures
     "Water Temp": "water_temp",
     "ECT": "water_temp",
@@ -129,8 +131,8 @@ def _convert_mph_to_kph(df: pd.DataFrame) -> pd.DataFrame:
     mph_to_kph = 1.60934
     if "speed_mph" in df.columns:
         df["speed_kph"] = df["speed_mph"] * mph_to_kph
-    elif "speed_avg_mph" in df.columns and "speed_kph" not in df.columns:
-        df["speed_kph"] = df["speed_avg_mph"] * mph_to_kph
+    elif "speed_avg_kph" in df.columns and "speed_kph" not in df.columns:
+        df["speed_kph"] = df["speed_avg_kph"]
     return df
 
 
@@ -157,6 +159,21 @@ def _compute_distance(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _convert_xrk_speeds(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert XRK/XRZ speed channels to a unified speed_kph column.
+
+    AIM SOLO GPS Speed is in m/s; SpeedAverage and WheelSpd are in kph.
+    Prefer GPS Speed (highest accuracy), fall back to SpeedAverage.
+    """
+    if "gps_speed_ms" in df.columns:
+        df["speed_kph"] = df["gps_speed_ms"] * 3.6
+
+    elif "speed_avg_kph" in df.columns:
+        df["speed_kph"] = df["speed_avg_kph"]
+
+    return df
+
+
 def parse_xrk(file_path: str) -> ParsedSession:
     """Parse an AIM .xrk or .xrz file using libxrk."""
     try:
@@ -173,6 +190,7 @@ def parse_xrk(file_path: str) -> ParsedSession:
     merged = log.get_channels_as_table()
     df = merged.to_pandas()
     df = _normalize_columns(df)
+    df = _convert_xrk_speeds(df)
 
     laps = []
     if log.laps and log.laps.num_rows > 0:

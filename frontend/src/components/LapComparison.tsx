@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   LineChart,
   Line,
@@ -20,6 +20,8 @@ import {
   getCrossCompareCoaching,
   listSessions,
   getLaps,
+  sendChatMessage,
+  ChatMessage,
   LapComparisonResult,
   LapSummary,
   SessionResponse,
@@ -33,6 +35,7 @@ interface LapComparisonProps {
   laps: LapSummary[];
   selectedLaps: number[];
   onSelectLaps: (laps: number[]) => void;
+  onHoverDistance?: (distance_m: number | null) => void;
 }
 
 type CompareMode = "same" | "cross";
@@ -42,6 +45,7 @@ export default function LapComparison({
   laps,
   selectedLaps,
   onSelectLaps,
+  onHoverDistance,
 }: LapComparisonProps) {
   const [result, setResult] = useState<LapComparisonResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -299,6 +303,7 @@ export default function LapComparison({
           mode={mode}
           sessionId={sessionId}
           otherSessionId={otherSessionId}
+          onHoverDistance={onHoverDistance}
         />
       )}
     </div>
@@ -312,6 +317,7 @@ function ComparisonResults({
   mode,
   sessionId,
   otherSessionId,
+  onHoverDistance,
 }: {
   result: LapComparisonResult & { session_a_name?: string; session_b_name?: string; session_a_date?: string | null; session_b_date?: string | null };
   view: "delta" | "speed";
@@ -319,10 +325,30 @@ function ComparisonResults({
   mode: CompareMode;
   sessionId: string;
   otherSessionId: string;
+  onHoverDistance?: (distance_m: number | null) => void;
 }) {
   const [coaching, setCoaching] = useState<ComparisonCoaching | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState<string | null>(null);
+
+  const handleChartHover = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (state: any) => {
+      if (!onHoverDistance || !state?.isTooltipActive) {
+        onHoverDistance?.(null);
+        return;
+      }
+      const distance =
+        state?.activePayload?.[0]?.payload?.distance_m
+        ?? (typeof state?.activeLabel === "number" ? state.activeLabel : Number(state?.activeLabel));
+      onHoverDistance(distance != null && !isNaN(distance) ? distance : null);
+    },
+    [onHoverDistance],
+  );
+
+  const handleChartLeave = useCallback(() => {
+    onHoverDistance?.(null);
+  }, [onHoverDistance]);
 
   const requestCoaching = useCallback(async () => {
     setCoachLoading(true);
@@ -414,7 +440,7 @@ function ComparisonResults({
       <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
         <ResponsiveContainer width="100%" height={240}>
           {view === "delta" ? (
-            <ComposedChart data={result.delta_trace}>
+            <ComposedChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={11} tickFormatter={(v) => `${v}m`} />
               <YAxis
@@ -445,7 +471,7 @@ function ComparisonResults({
               <Line type="monotone" dataKey="time_delta_s" stroke="#F59E0B" strokeWidth={2} dot={false} />
             </ComposedChart>
           ) : (
-            <LineChart data={result.delta_trace}>
+            <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={11} tickFormatter={(v) => `${v}m`} />
               <YAxis
@@ -484,6 +510,103 @@ function ComparisonResults({
           )}
         </div>
       </div>
+
+      {/* Throttle overlay chart */}
+      {result.available_channels?.includes("throttle") && (
+        <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
+          <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Throttle %</h4>
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}m`} />
+              <YAxis stroke="#6B7280" fontSize={10} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
+                labelFormatter={(v) => `${v}m`}
+                formatter={(value: number, name: string) => [
+                  `${value}%`,
+                  name === "throttle_a" ? shortA : shortB,
+                ]}
+              />
+              <Line type="monotone" dataKey="throttle_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="throttle_a" />
+              <Line type="monotone" dataKey="throttle_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="throttle_b" />
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Brake overlay chart */}
+      {result.available_channels?.includes("brake") && (
+        <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
+          <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Brake Pressure</h4>
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}m`} />
+              <YAxis stroke="#6B7280" fontSize={10} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
+                labelFormatter={(v) => `${v}m`}
+                formatter={(value: number, name: string) => [
+                  `${value}`,
+                  name === "brake_a" ? shortA : shortB,
+                ]}
+              />
+              <Line type="monotone" dataKey="brake_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="brake_a" />
+              <Line type="monotone" dataKey="brake_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="brake_b" />
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Steering angle overlay chart */}
+      {result.available_channels?.includes("steering") && (
+        <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
+          <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Steering Angle (deg)</h4>
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}m`} />
+              <YAxis stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}°`} />
+              <ReferenceLine y={0} stroke="#6B7280" strokeDasharray="4 4" />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
+                labelFormatter={(v) => `${v}m`}
+                formatter={(value: number, name: string) => [
+                  `${value}°`,
+                  name === "steer_a" ? shortA : shortB,
+                ]}
+              />
+              <Line type="monotone" dataKey="steer_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="steer_a" />
+              <Line type="monotone" dataKey="steer_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="steer_b" />
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Corner-by-corner table */}
       {result.corner_deltas.length > 0 && (
@@ -648,6 +771,40 @@ function ComparisonResults({
                 </div>
               </div>
             )}
+
+            {/* Plain English Tips */}
+            {coaching.plain_english_tips && coaching.plain_english_tips.length > 0 && (
+              <div className="mt-2 pt-3 border-t border-gray-700/40">
+                <p className="text-xs text-amber-400/80 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  Quick Tips — In Plain English
+                </p>
+                <div className="space-y-2">
+                  {coaching.plain_english_tips.map((t, i) => {
+                    const impactColor = t.impact === "big"
+                      ? "bg-red-500/20 text-red-300 border-red-500/30"
+                      : t.impact === "medium"
+                        ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                        : "bg-gray-600/20 text-gray-400 border-gray-600/30";
+                    return (
+                      <div key={i} className="bg-gray-700/20 rounded-lg p-3 border border-gray-600/20">
+                        <div className="flex items-start gap-2">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex-shrink-0 mt-0.5 ${impactColor}`}>
+                            {t.impact === "big" ? "BIG" : t.impact === "medium" ? "MED" : "SMALL"}
+                          </span>
+                          <div>
+                            <p className="text-sm text-white font-medium">{String(t.tip)}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{String(t.why)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -659,6 +816,169 @@ function ComparisonResults({
           </div>
         )}
       </div>
+
+      {/* Inline follow-up chat — appears after coaching analysis */}
+      {coaching && (
+        <CoachingChat
+          sessionId={sessionId}
+          coaching={coaching}
+          lapA={result.lap_a}
+          lapB={result.lap_b}
+        />
+      )}
     </>
+  );
+}
+
+
+function CoachingChat({
+  sessionId,
+  coaching,
+  lapA,
+  lapB,
+}: {
+  sessionId: string;
+  coaching: ComparisonCoaching;
+  lapA: number;
+  lapB: number;
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const contextSeed: ChatMessage[] = [
+    {
+      role: "user",
+      content: `I just compared Lap ${lapA} vs Lap ${lapB}. Here is the AI coaching analysis:\n\nHeadline: ${coaching.headline}\n\nKey findings:\n${coaching.key_findings.map((f) => `- ${f.corner_label}: ${f.finding} (${f.advice})`).join("\n")}\n\nPlain english tips:\n${(coaching.plain_english_tips || []).map((t) => `- ${t.tip}: ${t.why}`).join("\n")}\n\nI have follow-up questions about this analysis.`,
+    },
+    {
+      role: "assistant",
+      content: "I've reviewed the comparison analysis. What would you like to know more about? I can dig deeper into any specific corner, explain why something is happening, or suggest drills to improve.",
+    },
+  ];
+
+  const send = async (text: string) => {
+    if (!text.trim() || sending) return;
+    const userMsg: ChatMessage = { role: "user", content: text };
+    const updated = [...messages, userMsg];
+    setMessages(updated);
+    setInput("");
+    setSending(true);
+
+    try {
+      const fullHistory = [...contextSeed, ...updated];
+      const resp = await sendChatMessage(sessionId, text, fullHistory.slice(0, -1));
+      setMessages([...updated, { role: "assistant", content: resp.message }]);
+    } catch {
+      setMessages([
+        ...updated,
+        { role: "assistant", content: "Sorry, I had trouble processing that. Please try again." },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const quickQuestions = [
+    "Which turn number is the biggest time loss?",
+    "What should I focus on first?",
+    "Am I at the limit or is there more grip?",
+    "Is this a car setup issue or driving?",
+  ];
+
+  return (
+    <div className="bg-gray-800/50 rounded-xl border border-gray-700/30 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-700/30">
+        <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          Ask Follow-up Questions
+        </h4>
+        <p className="text-[11px] text-gray-500 mt-0.5">Continue the conversation about this comparison</p>
+      </div>
+
+      <div className="max-h-[400px] overflow-y-auto">
+        {/* Quick question chips — only shown if no messages yet */}
+        {messages.length === 0 && (
+          <div className="px-4 pt-3 pb-1 flex flex-wrap gap-1.5">
+            {quickQuestions.map((q) => (
+              <button
+                key={q}
+                onClick={() => send(q)}
+                className="text-[11px] bg-gray-700/50 text-blue-400 border border-gray-600/40 rounded-full px-3 py-1.5 hover:bg-gray-700 transition-colors touch-manipulation"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Messages */}
+        <div className="px-4 py-3 space-y-2.5">
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white rounded-br-md"
+                    : "bg-gray-700/60 text-gray-200 rounded-bl-md"
+                }`}
+              >
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            </div>
+          ))}
+          {sending && (
+            <div className="flex justify-start">
+              <div className="bg-gray-700/60 rounded-2xl rounded-bl-md px-4 py-3">
+                <div className="flex gap-1">
+                  <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
+      </div>
+
+      {/* Input */}
+      <div className="px-3 py-2.5 border-t border-gray-700/30">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(input);
+          }}
+          className="flex gap-2"
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask about a specific corner, technique, or finding..."
+            className="flex-1 bg-gray-700/60 text-white rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-gray-500"
+            disabled={sending}
+          />
+          <button
+            type="submit"
+            disabled={sending || !input.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl px-3.5 py-2.5 transition-colors active:scale-95 touch-manipulation"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }

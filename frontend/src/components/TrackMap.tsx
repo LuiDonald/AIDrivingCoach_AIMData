@@ -6,6 +6,7 @@ import { getTrackMap, TrackMapData } from "@/lib/api";
 interface TrackMapProps {
   sessionId: string;
   lapNumber: number | null;
+  highlightDistance?: number | null;
   onDistanceSelect?: (distance_m: number) => void;
 }
 
@@ -22,7 +23,7 @@ function speedToColor(speed: number, min: number, max: number): string {
   return `rgb(${r},${g},0)`;
 }
 
-export default function TrackMap({ sessionId, lapNumber, onDistanceSelect }: TrackMapProps) {
+export default function TrackMap({ sessionId, lapNumber, highlightDistance, onDistanceSelect }: TrackMapProps) {
   const [data, setData] = useState<TrackMapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +147,20 @@ export default function TrackMap({ sessionId, lapNumber, onDistanceSelect }: Tra
     [handleSvgInteraction, onDistanceSelect, projected],
   );
 
+  const externalIdx = useMemo(() => {
+    if (highlightDistance == null || projected.length === 0) return null;
+    let best = 0;
+    let bestDiff = Math.abs(projected[0].distance - highlightDistance);
+    for (let i = 1; i < projected.length; i++) {
+      const diff = Math.abs(projected[i].distance - highlightDistance);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = i;
+      }
+    }
+    return best;
+  }, [highlightDistance, projected]);
+
   if (!lapNumber) {
     return (
       <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/30 text-center text-gray-500 text-sm">
@@ -178,7 +193,7 @@ export default function TrackMap({ sessionId, lapNumber, onDistanceSelect }: Tra
 
   if (!data || projected.length === 0) return null;
 
-  const activeIdx = selectedIdx ?? hoveredIdx;
+  const activeIdx = selectedIdx ?? hoveredIdx ?? externalIdx;
   const activePoint = activeIdx !== null ? projected[activeIdx] : null;
 
   return (
@@ -265,8 +280,21 @@ export default function TrackMap({ sessionId, lapNumber, onDistanceSelect }: Tra
 
         {activePoint && (
           <g>
+            {externalIdx != null && activeIdx === externalIdx && (
+              <circle cx={activePoint.x} cy={activePoint.y} r={14} fill="#F59E0B" opacity={0.25}>
+                <animate attributeName="r" values="10;16;10" dur="1.5s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.3;0.1;0.3" dur="1.5s" repeatCount="indefinite" />
+              </circle>
+            )}
             <circle cx={activePoint.x} cy={activePoint.y} r={7} fill="white" opacity={0.3} />
-            <circle cx={activePoint.x} cy={activePoint.y} r={4} fill="#3B82F6" stroke="white" strokeWidth={2} />
+            <circle
+              cx={activePoint.x}
+              cy={activePoint.y}
+              r={externalIdx != null && activeIdx === externalIdx ? 6 : 4}
+              fill={externalIdx != null && activeIdx === externalIdx ? "#F59E0B" : "#3B82F6"}
+              stroke="white"
+              strokeWidth={2}
+            />
           </g>
         )}
       </svg>

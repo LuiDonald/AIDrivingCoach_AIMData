@@ -245,6 +245,12 @@ export interface LapComparisonDeltaPoint {
   speed_a_mph: number;
   speed_b_mph: number;
   speed_diff_mph: number;
+  throttle_a?: number;
+  throttle_b?: number;
+  brake_a?: number;
+  brake_b?: number;
+  steer_a?: number;
+  steer_b?: number;
 }
 
 export interface LapComparisonResult {
@@ -257,6 +263,7 @@ export interface LapComparisonResult {
   corner_deltas: LapComparisonCornerDelta[];
   biggest_loss_corner: number | null;
   biggest_gain_corner: number | null;
+  available_channels?: string[];
 }
 
 export async function compareLaps(sessionId: string, lapA: number, lapB: number): Promise<LapComparisonResult> {
@@ -291,11 +298,18 @@ export interface ComparisonCoachingFinding {
   advice: string;
 }
 
+export interface PlainEnglishTip {
+  tip: string;
+  why: string;
+  impact: "big" | "medium" | "small";
+}
+
 export interface ComparisonCoaching {
   headline: string;
   key_findings: ComparisonCoachingFinding[];
   progression_notes: string | null;
   action_items: string[];
+  plain_english_tips?: PlainEnglishTip[];
 }
 
 export async function getCompareCoaching(sessionId: string, lapA: number, lapB: number): Promise<ComparisonCoaching> {
@@ -387,7 +401,13 @@ export function formatLapTime(seconds: number): string {
 
 export function formatDelta(seconds: number): string {
   const sign = seconds >= 0 ? "+" : "";
-  return `${sign}${seconds.toFixed(3)}s`;
+  const abs = Math.abs(seconds);
+  if (abs >= 60) {
+    const mins = Math.floor(abs / 60);
+    const secs = (abs % 60).toFixed(3).padStart(6, "0");
+    return `${sign}${mins}:${secs}`;
+  }
+  return `${sign}${abs.toFixed(3)}s`;
 }
 
 export function kphToMph(kph: number): number {

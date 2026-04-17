@@ -19,9 +19,42 @@ from app.services.lap_analysis import (
     get_braking_zones,
     analyze_corner_for_lap,
     compute_lap_summary,
+    compute_advanced_lap_metrics,
+    compute_advanced_corner_metrics,
 )
 
 router = APIRouter(prefix="/api/sessions/{session_id}", tags=["ai-coach"])
+
+KPH_TO_MPH = 0.621371
+
+
+def _corner_data_to_mph(d: dict) -> dict:
+    """Convert a CornerLapData dict's kph fields to mph for the AI model."""
+    out = dict(d)
+    for k in ("entry_speed_kph", "min_speed_kph", "exit_speed_kph"):
+        if k in out:
+            mph_key = k.replace("_kph", "_mph")
+            out[mph_key] = round(out.pop(k) * KPH_TO_MPH, 1)
+    return out
+
+
+def _convert_result_to_mph(result: dict) -> dict:
+    """Recursively convert _kph fields to _mph in a result dict."""
+    out = {}
+    for k, v in result.items():
+        if k.endswith("_kph") and isinstance(v, (int, float)):
+            out[k.replace("_kph", "_mph")] = round(v * KPH_TO_MPH, 1)
+        elif isinstance(v, list):
+            out[k] = [
+                _convert_result_to_mph(item) if isinstance(item, dict) else
+                round(item * KPH_TO_MPH, 1) if k.endswith("_kph") and isinstance(item, (int, float)) else item
+                for item in v
+            ]
+        elif isinstance(v, dict):
+            out[k] = _convert_result_to_mph(v)
+        else:
+            out[k] = v
+    return out
 
 
 async def _build_session_context(session_id: str, db: AsyncSession) -> dict:
@@ -121,8 +154,8 @@ async def _create_tool_executor(session_id: str, db: AsyncSession):
                     comparison["corners"].append({
                         "corner_id": corner.corner_id,
                         "corner_type": corner.corner_type,
-                        "lap_a": ca.__dict__,
-                        "lap_b": cb.__dict__,
+                        "lap_a": _corner_data_to_mph(ca.__dict__),
+                        "lap_b": _corner_data_to_mph(cb.__dict__),
                         "time_delta_s": round(ca.time_in_corner_s - cb.time_in_corner_s, 3),
                     })
             return comparison
@@ -140,7 +173,7 @@ async def _create_tool_executor(session_id: str, db: AsyncSession):
                     a = analyze_corner_for_lap(lap_df, corner)
                     if a:
                         a.lap_number = lap["lap_number"]
-                        results.append(a.__dict__)
+                        results.append(_corner_data_to_mph(a.__dict__))
             return {"corner_id": cid, "data": results}
 
         elif fn_name == "get_speed_trace":
@@ -148,7 +181,10 @@ async def _create_tool_executor(session_id: str, db: AsyncSession):
             traces = {}
             for lap in laps:
                 if lap["lap_number"] in lap_nums:
-                    traces[str(lap["lap_number"])] = get_speed_trace(parsed.df, lap)
+                    trace = get_speed_trace(parsed.df, lap)
+                    if "speed_kph" in trace:
+                        trace["speed_mph"] = [round(v * KPH_TO_MPH, 1) for v in trace.pop("speed_kph")]
+                    traces[str(lap["lap_number"])] = trace
             return traces
 
         elif fn_name == "get_consistency_report":
@@ -199,7 +235,22 @@ async def _create_tool_executor(session_id: str, db: AsyncSession):
             lap = next((l for l in laps if l["lap_number"] == ln), None)
             if not lap:
                 return {"error": f"Lap {ln} not found"}
-            return compute_gg_data(parsed.df, lap)
+            gg = compute_gg_data(parsed.df, lap)
+            if gg.get("speed_kph"):
+                gg["speed_mph"] = [round(v * KPH_TO_MPH, 1) for v in gg.pop("speed_kph")]
+            return gg
+
+        elif fn_name == "get_advanced_corner_analysis":
+            ln = fn_args["lap_number"]
+            lap = next((l for l in laps if l["lap_number"] == ln), None)
+            if not lap:
+                return {"error": f"Lap {ln} not found"}
+            adv_result = compute_advanced_lap_metrics(parsed.df, lap, corners)
+            cid = fn_args.get("corner_id")
+            if cid is not None:
+                filtered = [c for c in adv_result["corners"] if c["corner_id"] == cid]
+                adv_result["corners"] = filtered
+            return _convert_result_to_mph(adv_result)
 
         return {"error": f"Unknown function: {fn_name}"}
 
@@ -302,6 +353,12 @@ async def generate_report(session_id: str, db: AsyncSession = Depends(get_db)):
     theoretical = compute_theoretical_best(parsed.df, laps, corners)
     consistency = compute_consistency(parsed.df, laps, corners)
 
+    # Compute advanced telemetry metrics for the best lap
+    best_lap = next((l for l in laps if l["lap_number"] == session.best_lap_number), None)
+    advanced = None
+    if best_lap:
+        advanced = compute_advanced_lap_metrics(parsed.df, best_lap, corners)
+
     summary_data = {
         "track": session.track_name,
         "driver": session.driver_name,
@@ -313,9 +370,10 @@ async def generate_report(session_id: str, db: AsyncSession = Depends(get_db)):
         "theoretical_best": theoretical,
         "consistency": consistency,
         "lap_summaries": [
-            compute_lap_summary(parsed.df, lap)
+            _convert_result_to_mph(compute_lap_summary(parsed.df, lap))
             for lap in laps
         ],
+        "advanced_metrics_best_lap": _convert_result_to_mph(advanced) if advanced else None,
     }
 
     report = await generate_coaching_report(summary_data)

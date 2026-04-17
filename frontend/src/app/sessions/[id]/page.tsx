@@ -16,7 +16,6 @@ import {
 } from "@/lib/api";
 import LapTable from "@/components/LapTable";
 import SpeedTraceChart from "@/components/SpeedTraceChart";
-import GGDiagram from "@/components/GGDiagram";
 import TrackMap from "@/components/TrackMap";
 import CornerSuggestions from "@/components/CornerSuggestions";
 import LapComparison from "@/components/LapComparison";
@@ -24,7 +23,7 @@ import CoachingPanel from "@/components/CoachingPanel";
 import ChatPanel from "@/components/ChatPanel";
 import PhotoUpload from "@/components/PhotoUpload";
 
-type Tab = "overview" | "compare" | "analysis" | "coach" | "photos";
+type Tab = "overview" | "compare" | "coach" | "photos";
 
 export default function SessionPage() {
   const params = useParams();
@@ -38,6 +37,7 @@ export default function SessionPage() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
   const [mapCollapsed, setMapCollapsed] = useState(false);
+  const [hoverDistance, setHoverDistance] = useState<number | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -89,7 +89,6 @@ export default function SessionPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "compare", label: "Compare" },
-    { key: "analysis", label: "Analysis" },
     { key: "coach", label: "AI Coach" },
     { key: "photos", label: "Photos" },
   ];
@@ -98,9 +97,15 @@ export default function SessionPage() {
 
   const trackMapSidebar = (
     <div className="space-y-3">
+      {hoverDistance != null && (
+        <div className="bg-amber-500/20 border border-amber-500/40 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-mono text-center">
+          Chart hover: {hoverDistance.toFixed(1)}m
+        </div>
+      )}
       <TrackMap
         sessionId={sessionId}
         lapNumber={activeLap}
+        highlightDistance={hoverDistance}
       />
     </div>
   );
@@ -205,7 +210,7 @@ export default function SessionPage() {
             {tabs.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => { setActiveTab(tab.key); setHoverDistance(null); }}
                 className={`flex-1 min-w-0 py-2.5 px-3 rounded-lg text-sm font-medium transition-colors touch-manipulation whitespace-nowrap ${
                   activeTab === tab.key
                     ? "bg-gray-700 text-white"
@@ -217,45 +222,34 @@ export default function SessionPage() {
             ))}
           </div>
 
-          {/* Tab content */}
-          {activeTab === "overview" && (
+          {/* Tab content — all panels stay mounted to preserve state */}
+          <div className={activeTab === "overview" ? "" : "hidden"}>
             <div className="space-y-6">
               <LapTable laps={laps} selectedLaps={selectedLaps} onToggleLap={toggleLap} />
               <SpeedTraceChart sessionId={sessionId} lapNumbers={selectedLaps} />
             </div>
-          )}
+          </div>
 
-          {activeTab === "compare" && (
+          <div className={activeTab === "compare" ? "" : "hidden"}>
             <LapComparison
               sessionId={sessionId}
               laps={laps}
               selectedLaps={selectedLaps}
               onSelectLaps={setSelectedLaps}
+              onHoverDistance={setHoverDistance}
             />
-          )}
+          </div>
 
-          {activeTab === "analysis" && (
-            <div className="space-y-6">
-              <SpeedTraceChart sessionId={sessionId} lapNumbers={selectedLaps} />
-              <GGDiagram
-                sessionId={sessionId}
-                lapNumber={activeLap}
-              />
-              <CornerSuggestions sessionId={sessionId} />
-              <LapTable laps={laps} selectedLaps={selectedLaps} onToggleLap={toggleLap} />
-            </div>
-          )}
-
-          {activeTab === "coach" && (
+          <div className={activeTab === "coach" ? "" : "hidden"}>
             <div className="space-y-6">
               <CornerSuggestions sessionId={sessionId} />
               <CoachingPanel sessionId={sessionId} />
             </div>
-          )}
+          </div>
 
-          {activeTab === "photos" && (
+          <div className={activeTab === "photos" ? "" : "hidden"}>
             <PhotoUpload sessionId={sessionId} />
-          )}
+          </div>
         </div>
 
         {/* Right: persistent track map sidebar (desktop only) */}

@@ -17,11 +17,31 @@ from app.services.lap_analysis import (
     get_braking_zones,
     analyze_corner_for_lap,
     compare_laps,
+    compute_advanced_lap_metrics,
 )
 from app.services.track_database import match_track, map_detected_to_known
 from app.services.ai_coach import generate_comparison_coaching
 
 KPH_TO_MPH = 0.621371
+
+
+def _convert_result_to_mph(result: dict) -> dict:
+    """Recursively convert _kph fields to _mph in a result dict."""
+    out = {}
+    for k, v in result.items():
+        if k.endswith("_kph") and isinstance(v, (int, float)):
+            out[k.replace("_kph", "_mph")] = round(v * KPH_TO_MPH, 1)
+        elif isinstance(v, list):
+            out[k] = [
+                _convert_result_to_mph(item) if isinstance(item, dict) else item
+                for item in v
+            ]
+        elif isinstance(v, dict):
+            out[k] = _convert_result_to_mph(v)
+        else:
+            out[k] = v
+    return out
+
 
 router = APIRouter(prefix="/api/sessions/{session_id}/analysis", tags=["analysis"])
 cross_router = APIRouter(prefix="/api/compare", tags=["compare"])
@@ -271,6 +291,11 @@ async def compare_coaching(
     else:
         for cd in result.get("corner_deltas", []):
             cd["corner_label"] = f"Turn {cd['corner_id']}"
+
+    adv_a = _convert_result_to_mph(compute_advanced_lap_metrics(parsed.df, lap_a_data, corners))
+    adv_b = _convert_result_to_mph(compute_advanced_lap_metrics(parsed.df, lap_b_data, corners))
+    result["advanced_metrics_lap_a"] = adv_a
+    result["advanced_metrics_lap_b"] = adv_b
 
     coaching = await generate_comparison_coaching(result)
     return coaching
@@ -576,6 +601,22 @@ async def corner_suggestions(
         "track_name": track_name,
         "summary": f"Found {len(suggestions)} improvement opportunities across {len(corners)} corners at {track_name}. Estimated total gain: {total_gain:.2f}s.",
     }
+
+
+@router.get("/advanced-metrics")
+async def advanced_metrics(
+    session_id: str,
+    lap_number: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get advanced telemetry metrics for a lap: friction circle, trail-braking,
+    throttle analysis, steering balance, and wheel slip per corner."""
+    session, parsed, laps, corners = await _load_session_data(session_id, db)
+    lap = next((l for l in laps if l["lap_number"] == lap_number), None)
+    if not lap:
+        raise HTTPException(404, f"Lap {lap_number} not found")
+
+    return compute_advanced_lap_metrics(parsed.df, lap, corners)
 
 
 # ---- Cross-session comparison ----
