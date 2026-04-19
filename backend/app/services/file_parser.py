@@ -453,12 +453,187 @@ def _detect_laps_from_csv(df: pd.DataFrame, metadata: dict) -> list[dict]:
     return []
 
 
+PTP_COLUMNS = {
+    "brakePressure", "velocity", "lateralAcceleration",
+    "longitudinalAcceleration", "pedalForce", "engineSpeed",
+    "steeringAngle", "timestamp", "laptime",
+}
+
+PTP_COLUMN_MAP = {
+    "velocity": "speed_kph",
+    "engineSpeed": "rpm",
+    "currentGear": "gear",
+    "steeringAngle": "steering_angle",
+    "brakePressure": "brake_pressure",
+    "pedalForce": "throttle_pct",
+    "latitude": "gps_lat",
+    "longitude": "gps_lon",
+    "distance": "distance_m",
+    "gierrate": "yaw_rate",
+    "oversteering": "oversteer_flag",
+    "understeering": "understeer_flag",
+    "tireSpeedFrontLeft": "wheel_speed_fl_kph",
+    "tireSpeedFrontRight": "wheel_speed_fr_kph",
+    "tireSpeedRearLeft": "wheel_speed_rl_kph",
+    "tireSpeedRearRight": "wheel_speed_rr_kph",
+    "tirePressureFrontLeft": "tire_pressure_fl",
+    "tirePressureFrontRight": "tire_pressure_fr",
+    "tirePressureRearLeft": "tire_pressure_rl",
+    "tirePressureRearRight": "tire_pressure_rr",
+}
+
+PTP_STRING_COLUMNS = {
+    "electronicStabilityProgram", "gearSelection",
+    "wpoCharismaDamper", "wpoCharismaMotor", "wpoCharismaTransmission",
+}
+
+
+def _is_ptp_csv(file_path: str) -> bool:
+    """Detect Porsche Track Precision CSV by checking header columns."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        header = f.readline().strip()
+    cols = {c.strip() for c in header.split(",")}
+    return len(cols & PTP_COLUMNS) >= 5
+
+
+def _detect_ptp_laps(df: pd.DataFrame) -> list[dict]:
+    """Detect laps from laptime column resets in PTP data."""
+    if "laptime" not in df.columns or "time_ms" not in df.columns:
+        return []
+
+    laptime = df["laptime"].values
+    time_ms = df["time_ms"].values
+
+    boundaries = [0]
+    for i in range(1, len(laptime)):
+        if laptime[i] < laptime[i - 1] - 0.5:
+            boundaries.append(i)
+    boundaries.append(len(df))
+
+    laps = []
+    for lap_num, (start_idx, end_idx) in enumerate(
+        zip(boundaries[:-1], boundaries[1:]), start=1
+    ):
+        if end_idx - start_idx < 10:
+            continue
+        start_t = int(time_ms[start_idx])
+        end_t = int(time_ms[end_idx - 1])
+        lap_time_s = (end_t - start_t) / 1000.0
+        if lap_time_s > 5:
+            laps.append({
+                "lap_number": lap_num,
+                "start_time_ms": start_t,
+                "end_time_ms": end_t,
+                "lap_time_s": round(lap_time_s, 3),
+            })
+
+    return laps
+
+
+def parse_ptp_csv(file_path: str) -> ParsedSession:
+    """Parse a Porsche Track Precision CSV export."""
+    df = pd.read_csv(file_path, encoding="utf-8", na_values=["NULL", "null", "nan"])
+
+    raw_channels = list(df.columns)
+
+    # Drop string-only columns before numeric conversion
+    drop_cols = [c for c in PTP_STRING_COLUMNS if c in df.columns]
+    mode_info = {}
+    for col in ("wpoCharismaMotor", "wpoCharismaDamper", "wpoCharismaTransmission"):
+        if col in df.columns:
+            mode_val = df[col].dropna().mode()
+            if len(mode_val) > 0:
+                mode_info[col] = str(mode_val.iloc[0])
+    df = df.drop(columns=drop_cols, errors="ignore")
+
+    # Convert gear column: "N" → 0, numeric strings stay
+    if "currentGear" in df.columns:
+        df["currentGear"] = pd.to_numeric(
+            df["currentGear"].replace({"N": 0, "R": -1}), errors="coerce"
+        )
+
+    # Coerce remaining columns to numeric
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Timestamp → relative time_ms (offset from session start)
+    if "timestamp" in df.columns:
+        ts = df["timestamp"].values
+        df["time_ms"] = (ts - ts[0]).astype(int)
+
+    # Convert accelerations: m/s² → G
+    if "lateralAcceleration" in df.columns:
+        df["lateral_g"] = df["lateralAcceleration"] / 9.81
+        df = df.drop(columns=["lateralAcceleration"])
+    if "longitudinalAcceleration" in df.columns:
+        df["longitudinal_g"] = df["longitudinalAcceleration"] / 9.81
+        df = df.drop(columns=["longitudinalAcceleration"])
+
+    # Scale pedalForce (0-1) → throttle_pct (0-100)
+    if "pedalForce" in df.columns:
+        df["pedalForce"] = df["pedalForce"] * 100.0
+
+    # Rename mapped columns
+    rename = {k: v for k, v in PTP_COLUMN_MAP.items() if k in df.columns}
+    df = df.rename(columns=rename)
+
+    # Drop leftover unmapped columns
+    df = df.drop(columns=["timestamp", "laptime"], errors="ignore")
+
+    df = _compute_distance(df)
+
+    # Detect laps before we drop laptime (re-read for lap detection)
+    raw_df = pd.read_csv(file_path, encoding="utf-8", na_values=["NULL", "null", "nan"])
+    for col in raw_df.columns:
+        if raw_df[col].dtype == object:
+            raw_df[col] = pd.to_numeric(raw_df[col], errors="coerce")
+    if "timestamp" in raw_df.columns:
+        ts = raw_df["timestamp"].values
+        raw_df["time_ms"] = (ts - ts[0]).astype(int)
+    laps = _detect_ptp_laps(raw_df)
+
+    # Build metadata from filename and driving modes
+    import re
+    fname = Path(file_path).stem
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
+    metadata = {
+        "Data Source": "Porsche Track Precision",
+        "Device Name": "Porsche Track Precision",
+        **mode_info,
+    }
+    if date_match:
+        metadata["Date"] = date_match.group(1)
+
+    # Try to detect track from median GPS coordinates
+    if "gps_lat" in df.columns and "gps_lon" in df.columns:
+        med_lat = df["gps_lat"].dropna().median()
+        med_lon = df["gps_lon"].dropna().median()
+        if pd.notna(med_lat) and pd.notna(med_lon):
+            metadata["gps_lat"] = float(med_lat)
+            metadata["gps_lon"] = float(med_lon)
+
+    normalized_channels = [
+        c for c in df.columns if c not in ("time_ms", "laptime")
+    ]
+
+    return ParsedSession(
+        df=df,
+        laps=laps,
+        metadata=metadata,
+        channels=normalized_channels,
+        raw_channels=raw_channels,
+    )
+
+
 def parse_file(file_path: str) -> ParsedSession:
     """Auto-detect file format and parse."""
     ext = Path(file_path).suffix.lower()
     if ext in (".xrk", ".xrz"):
         return parse_xrk(file_path)
     elif ext == ".csv":
+        if _is_ptp_csv(file_path):
+            return parse_ptp_csv(file_path)
         return parse_csv(file_path)
     else:
         raise ValueError(f"Unsupported file format: {ext}. Supported: .xrk, .xrz, .csv")

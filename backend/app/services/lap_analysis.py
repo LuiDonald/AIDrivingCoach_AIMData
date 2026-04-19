@@ -6,6 +6,20 @@ from dataclasses import dataclass
 
 from app.services.track_segmentation import DetectedCorner, segment_lap_distance
 
+FLYING_LAP_THRESHOLD = 1.10
+
+
+def filter_flying_laps(laps: list[dict]) -> list[dict]:
+    """Return only representative flying laps (within 110% of the best).
+
+    Excludes out-laps, in-laps, and any laps that are significantly off-pace.
+    """
+    if not laps:
+        return laps
+    best_time = min(l["lap_time_s"] for l in laps)
+    cutoff = best_time * FLYING_LAP_THRESHOLD
+    return [l for l in laps if l["lap_time_s"] <= cutoff]
+
 
 @dataclass
 class CornerLapData:
@@ -86,8 +100,9 @@ def compute_theoretical_best(
     """Compute theoretical best lap from fastest segments across all laps.
 
     Divides the track into segments (between corners) and takes the fastest
-    time through each segment across all laps.
+    time through each segment across all flying laps (excludes out/in laps).
     """
+    laps = filter_flying_laps(laps)
     if len(laps) < 2 or len(corners) == 0:
         best_lap = min(laps, key=lambda l: l["lap_time_s"]) if laps else None
         return {
@@ -123,14 +138,30 @@ def compute_theoretical_best(
         if breakpoints[i + 1] - breakpoints[i] > 5:
             segments.append((breakpoints[i], breakpoints[i + 1]))
 
+    # Build a map from (start, end) → corner for labeling
+    corner_map: dict[tuple[float, float], DetectedCorner] = {}
+    for c in corners:
+        for seg_s, seg_e in segments:
+            if abs(seg_s - c.start_distance_m) < 1 and abs(seg_e - c.end_distance_m) < 1:
+                corner_map[(seg_s, seg_e)] = c
+                break
+
+    # Pre-compute lap DataFrames to avoid redundant parsing
+    lap_dfs = {}
+    for lap in laps:
+        lap_df = segment_lap_distance(df, lap["start_time_ms"], lap["end_time_ms"])
+        if len(lap_df) > 0:
+            lap_dfs[lap["lap_number"]] = lap_df
+
     best_segment_times = []
     for seg_start, seg_end in segments:
         best_time = float("inf")
         best_source = -1
+        per_lap_times = {}
 
         for lap in laps:
-            lap_df = segment_lap_distance(df, lap["start_time_ms"], lap["end_time_ms"])
-            if len(lap_df) == 0:
+            lap_df = lap_dfs.get(lap["lap_number"])
+            if lap_df is None:
                 continue
 
             mask = (lap_df["distance_m"] >= seg_start) & (lap_df["distance_m"] <= seg_end)
@@ -139,19 +170,31 @@ def compute_theoretical_best(
                 continue
 
             seg_time = (seg_data["time_ms"].iloc[-1] - seg_data["time_ms"].iloc[0]) / 1000.0
+            per_lap_times[lap["lap_number"]] = round(seg_time, 3)
             if seg_time < best_time:
                 best_time = seg_time
                 best_source = lap["lap_number"]
 
         if best_time < float("inf"):
+            corner = corner_map.get((seg_start, seg_end))
+            seg_type = "corner" if corner else "straight"
+            seg_label = f"Turn {corner.corner_id}" if corner else "Straight"
             best_segment_times.append({
                 "segment_start_m": seg_start,
                 "segment_end_m": seg_end,
                 "best_time_s": round(best_time, 3),
                 "from_lap": best_source,
+                "type": seg_type,
+                "label": seg_label,
+                "corner_id": corner.corner_id if corner else None,
+                "per_lap_times": per_lap_times,
             })
 
-    theoretical = sum(s["best_time_s"] for s in best_segment_times)
+    # Merge each straight with the following corner into a single sector.
+    # This gives drivers one sector per corner (approach + corner).
+    merged = _merge_sectors(best_segment_times)
+
+    theoretical = sum(s["best_time_s"] for s in merged)
     actual_best = ref_lap["lap_time_s"]
     delta = actual_best - theoretical
     improvement_pct = (delta / actual_best * 100) if actual_best > 0 else 0
@@ -161,7 +204,71 @@ def compute_theoretical_best(
         "theoretical_best_time_s": round(theoretical, 3),
         "time_delta_s": round(delta, 3),
         "improvement_pct": round(improvement_pct, 2),
-        "segment_sources": best_segment_times,
+        "best_lap_number": ref_lap["lap_number"],
+        "segment_sources": merged,
+    }
+
+
+def _merge_sectors(segments: list[dict]) -> list[dict]:
+    """Merge straight segments with the following corner into combined sectors.
+
+    Each resulting sector contains the approach straight + the corner itself,
+    giving drivers a natural per-corner view of the lap.
+    """
+    if not segments:
+        return []
+
+    merged: list[dict] = []
+    pending_straight: dict | None = None
+
+    for seg in segments:
+        if seg["type"] == "straight":
+            if pending_straight is not None:
+                merged.append(pending_straight)
+            pending_straight = seg
+        else:
+            if pending_straight is not None:
+                merged.append(_combine_two(pending_straight, seg))
+                pending_straight = None
+            else:
+                merged.append(seg)
+
+    if pending_straight is not None:
+        if merged:
+            merged[-1] = _combine_two(merged[-1], pending_straight)
+        else:
+            merged.append(pending_straight)
+
+    return merged
+
+
+def _combine_two(a: dict, b: dict) -> dict:
+    """Combine two adjacent segments into one, summing per-lap times."""
+    all_laps = set(a.get("per_lap_times", {}).keys()) | set(b.get("per_lap_times", {}).keys())
+    combined_per_lap = {}
+    for lap in all_laps:
+        t_a = a.get("per_lap_times", {}).get(lap)
+        t_b = b.get("per_lap_times", {}).get(lap)
+        if t_a is not None and t_b is not None:
+            combined_per_lap[lap] = round(t_a + t_b, 3)
+
+    best_time = float("inf")
+    best_source = -1
+    for lap, t in combined_per_lap.items():
+        if t < best_time:
+            best_time = t
+            best_source = lap
+
+    corner_seg = b if b["type"] == "corner" else a
+    return {
+        "segment_start_m": a["segment_start_m"],
+        "segment_end_m": b["segment_end_m"],
+        "best_time_s": round(best_time, 3) if best_time < float("inf") else round(a["best_time_s"] + b["best_time_s"], 3),
+        "from_lap": best_source if best_source >= 0 else a["from_lap"],
+        "type": "sector",
+        "label": corner_seg["label"],
+        "corner_id": corner_seg.get("corner_id"),
+        "per_lap_times": combined_per_lap,
     }
 
 
@@ -170,7 +277,8 @@ def compute_consistency(
     laps: list[dict],
     corners: list[DetectedCorner],
 ) -> dict:
-    """Score driver consistency across laps and corners."""
+    """Score driver consistency across flying laps and corners."""
+    laps = filter_flying_laps(laps)
     if len(laps) < 3:
         return {
             "overall_score_pct": 0,

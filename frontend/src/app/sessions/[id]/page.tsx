@@ -22,6 +22,7 @@ import LapComparison from "@/components/LapComparison";
 import CoachingPanel from "@/components/CoachingPanel";
 import ChatPanel from "@/components/ChatPanel";
 import PhotoUpload from "@/components/PhotoUpload";
+import TheoreticalBestBreakdown from "@/components/TheoreticalBestBreakdown";
 
 type Tab = "overview" | "compare" | "coach" | "photos";
 
@@ -225,6 +226,9 @@ export default function SessionPage() {
           {/* Tab content — all panels stay mounted to preserve state */}
           <div className={activeTab === "overview" ? "" : "hidden"}>
             <div className="space-y-6">
+              {theoretical && theoretical.segment_sources.length > 0 && (
+                <TheoreticalBestBreakdown theoretical={theoretical} laps={laps} />
+              )}
               <LapTable laps={laps} selectedLaps={selectedLaps} onToggleLap={toggleLap} />
               <SpeedTraceChart sessionId={sessionId} lapNumbers={selectedLaps} />
             </div>

@@ -154,12 +154,24 @@ export async function getGGDiagram(sessionId: string, lapNumber: number): Promis
   return request(`/api/sessions/${sessionId}/analysis/gg-diagram?lap_number=${lapNumber}`);
 }
 
+export interface SegmentSource {
+  segment_start_m: number;
+  segment_end_m: number;
+  best_time_s: number;
+  from_lap: number;
+  type: "corner" | "straight" | "sector";
+  label: string;
+  corner_id: number | null;
+  per_lap_times: Record<number, number>;
+}
+
 export interface TheoreticalBest {
   actual_best_time_s: number;
   theoretical_best_time_s: number;
   time_delta_s: number;
   improvement_pct: number;
-  segment_sources: Array<{ segment_start_m: number; segment_end_m: number; best_time_s: number; from_lap: number }>;
+  best_lap_number: number;
+  segment_sources: SegmentSource[];
 }
 
 export async function getTheoreticalBest(sessionId: string): Promise<TheoreticalBest> {

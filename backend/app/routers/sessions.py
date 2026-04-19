@@ -70,6 +70,19 @@ async def upload_session(
 
     file_meta = parsed.metadata
     track_name = file_meta.get("Venue") or file_meta.get("venue") or file_meta.get("Track")
+
+    # GPS-based track detection for sources without track names (e.g. Porsche Track Precision)
+    if not track_name:
+        from app.services.track_database import match_track as _match_track
+        gps_lat = file_meta.get("gps_lat")
+        gps_lon = file_meta.get("gps_lon")
+        if gps_lat is None and "gps_lat" in parsed.df.columns:
+            gps_lat = float(parsed.df["gps_lat"].dropna().median())
+            gps_lon = float(parsed.df["gps_lon"].dropna().median())
+        matched = _match_track(None, None, gps_lat=gps_lat, gps_lon=gps_lon)
+        if matched:
+            track_name = matched["full_name"]
+
     session_date_str = file_meta.get("Log Date") or file_meta.get("Date")
     session_date = None
     if session_date_str:

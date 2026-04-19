@@ -25,6 +25,20 @@ from app.services.ai_coach import generate_comparison_coaching
 KPH_TO_MPH = 0.621371
 
 
+def _match_track_with_gps(session, parsed):
+    """Match track by name first, then fall back to GPS coordinates."""
+    venue = session.track_name or ""
+    venue_meta = parsed.metadata.get("Venue") if parsed.metadata else None
+    gps_lat = parsed.metadata.get("gps_lat") if parsed.metadata else None
+    gps_lon = parsed.metadata.get("gps_lon") if parsed.metadata else None
+    if gps_lat is None and "gps_lat" in parsed.df.columns:
+        lat_vals = parsed.df["gps_lat"].dropna()
+        if len(lat_vals) > 0:
+            gps_lat = float(lat_vals.median())
+            gps_lon = float(parsed.df["gps_lon"].dropna().median())
+    return match_track(venue, venue_meta, gps_lat=gps_lat, gps_lon=gps_lon)
+
+
 def _convert_result_to_mph(result: dict) -> dict:
     """Recursively convert _kph fields to _mph in a result dict."""
     out = {}
@@ -154,7 +168,21 @@ async def theoretical_best(
 ):
     """Compute theoretical best lap time from fastest segments."""
     session, parsed, laps, corners = await _load_session_data(session_id, db)
-    return compute_theoretical_best(parsed.df, laps, corners)
+    result = compute_theoretical_best(parsed.df, laps, corners)
+
+    known = _match_track_with_gps(session, parsed)
+    if known and result.get("segment_sources"):
+        corner_dicts = [
+            {"corner_id": c.corner_id, "apex_distance_m": c.apex_distance_m}
+            for c in corners
+        ]
+        mapped = map_detected_to_known(corner_dicts, known)
+        name_map = {m["corner_id"]: m["name"] for m in mapped}
+        for seg in result["segment_sources"]:
+            if seg.get("corner_id") and seg["corner_id"] in name_map:
+                seg["label"] = name_map[seg["corner_id"]]
+
+    return result
 
 
 @router.get("/consistency")
@@ -264,8 +292,7 @@ async def compare_two_laps(
     result = compare_laps(parsed.df, lap_a_data, lap_b_data, corners)
 
     # Attach known corner names
-    venue = session.track_name or ""
-    known = match_track(venue, parsed.metadata.get("Venue") if parsed.metadata else None)
+    known = _match_track_with_gps(session, parsed)
     if known and result.get("corner_deltas"):
         corner_dicts = [
             {"corner_id": c.corner_id, "apex_distance_m": c.apex_distance_m}
@@ -300,8 +327,7 @@ async def compare_coaching(
 
     result = compare_laps(parsed.df, lap_a_data, lap_b_data, corners)
 
-    venue = session.track_name or ""
-    known = match_track(venue, parsed.metadata.get("Venue") if parsed.metadata else None)
+    known = _match_track_with_gps(session, parsed)
     if known and result.get("corner_deltas"):
         corner_dicts = [
             {"corner_id": c.corner_id, "apex_distance_m": c.apex_distance_m}
@@ -332,8 +358,7 @@ async def track_info(
     """Get known track info and corner names for the session's venue."""
     session, parsed, laps, corners = await _load_session_data(session_id, db)
 
-    venue = session.track_name or ""
-    known = match_track(venue, parsed.metadata.get("Venue") if parsed.metadata else None)
+    known = _match_track_with_gps(session, parsed)
 
     corner_list = [
         {
@@ -355,7 +380,7 @@ async def track_info(
         }
 
     return {
-        "track_name": venue or "Unknown Track",
+        "track_name": (session.track_name or "") or "Unknown Track",
         "track_matched": False,
         "corners": [
             {**c, "label": str(c["corner_id"]), "name": f"Turn {c['corner_id']}", "description": ""}
@@ -405,8 +430,7 @@ async def track_map(
         })
 
     # Match to known track for corner labels
-    venue = session.track_name or ""
-    known = match_track(venue, parsed.metadata.get("Venue") if parsed.metadata else None)
+    known = _match_track_with_gps(session, parsed)
 
     corner_markers = []
     for c in corners:
@@ -447,14 +471,15 @@ async def corner_suggestions(
     Uses real corner names from the motorsport community when the track is known.
     All speeds in mph.
     """
+    from app.services.lap_analysis import filter_flying_laps
     session, parsed, laps, corners = await _load_session_data(session_id, db)
+    laps = filter_flying_laps(laps)
 
     if not corners:
         return {"suggestions": [], "summary": "No corners detected in session data."}
 
     # Resolve corner names from known track database
-    venue = session.track_name or ""
-    known = match_track(venue, parsed.metadata.get("Venue") if parsed.metadata else None)
+    known = _match_track_with_gps(session, parsed)
     corner_names: dict[int, str] = {}
     if known:
         corner_dicts = [
@@ -678,8 +703,7 @@ async def cross_session_compare(
     result["session_b_date"] = str(sess_b.session_date) if sess_b.session_date else None
 
     # Attach known corner names
-    venue_a = sess_a.track_name or ""
-    known_a = match_track(venue_a, parsed_a.metadata.get("Venue") if parsed_a.metadata else None)
+    known_a = _match_track_with_gps(sess_a, parsed_a)
     if known_a and result.get("corner_deltas"):
         corner_dicts = [
             {"corner_id": c.corner_id, "apex_distance_m": c.apex_distance_m}

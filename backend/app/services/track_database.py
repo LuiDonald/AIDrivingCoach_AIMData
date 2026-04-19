@@ -25,6 +25,8 @@ TRACK_DATABASE: dict[str, dict] = {
             "new jersey motorsports park", "thunderbolt raceway",
             "njmp - thunderbolt", "njmp_thunderbolt",
         ],
+        "lat": 39.360,
+        "lon": -75.070,
         "length_mi": 2.25,
         "length_m": 3621,
         "corners": [
@@ -50,6 +52,8 @@ TRACK_DATABASE: dict[str, dict] = {
         "aliases": [
             "watkins glen", "the glen", "wgi",
         ],
+        "lat": 42.337,
+        "lon": -76.927,
         "length_mi": 3.37,
         "length_m": 5430,
         "corners": [
@@ -71,6 +75,8 @@ TRACK_DATABASE: dict[str, dict] = {
         "aliases": [
             "vir", "virginia international raceway", "vir full",
         ],
+        "lat": 36.634,
+        "lon": -79.206,
         "length_mi": 3.27,
         "length_m": 5263,
         "corners": [
@@ -95,6 +101,8 @@ TRACK_DATABASE: dict[str, dict] = {
         "aliases": [
             "road america", "elkhart lake",
         ],
+        "lat": 43.800,
+        "lon": -87.989,
         "length_mi": 4.048,
         "length_m": 6515,
         "corners": [
@@ -117,22 +125,49 @@ TRACK_DATABASE: dict[str, dict] = {
 }
 
 
-def match_track(venue_name: str | None, track_name: str | None) -> dict | None:
-    """Try to match a session's venue/track to a known track layout."""
-    if not venue_name and not track_name:
-        return None
+def match_track(
+    venue_name: str | None,
+    track_name: str | None,
+    gps_lat: float | None = None,
+    gps_lon: float | None = None,
+) -> dict | None:
+    """Try to match a session's venue/track to a known track layout.
 
+    Matches by name first, then falls back to GPS proximity (~2 km radius).
+    """
     search_terms = []
     if venue_name:
         search_terms.append(venue_name.lower().strip())
     if track_name:
         search_terms.append(track_name.lower().strip())
 
-    for track_key, track_data in TRACK_DATABASE.items():
-        for alias in track_data["aliases"]:
-            for term in search_terms:
-                if alias in term or term in alias:
-                    return track_data
+    if search_terms:
+        for track_key, track_data in TRACK_DATABASE.items():
+            for alias in track_data["aliases"]:
+                for term in search_terms:
+                    if alias in term or term in alias:
+                        return track_data
+
+    if gps_lat is not None and gps_lon is not None:
+        import math
+        best_match = None
+        best_dist = float("inf")
+        for track_key, track_data in TRACK_DATABASE.items():
+            t_lat = track_data.get("lat")
+            t_lon = track_data.get("lon")
+            if t_lat is None or t_lon is None:
+                continue
+            dlat = math.radians(gps_lat - t_lat)
+            dlon = math.radians(gps_lon - t_lon)
+            a = (math.sin(dlat / 2) ** 2 +
+                 math.cos(math.radians(gps_lat)) * math.cos(math.radians(t_lat)) *
+                 math.sin(dlon / 2) ** 2)
+            dist_m = 6371000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            if dist_m < best_dist:
+                best_dist = dist_m
+                best_match = track_data
+        if best_match and best_dist < 2000:
+            return best_match
 
     return None
 
