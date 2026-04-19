@@ -17,6 +17,7 @@ class Session(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
+    file_hash = Column(String, nullable=True, index=True, unique=True)
     track_name = Column(String, nullable=True)
     venue = Column(String, nullable=True)
     session_date = Column(DateTime, nullable=True)

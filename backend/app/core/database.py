@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -16,6 +17,19 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+def _migrate(connection):
+    """Add columns that may be missing in older databases."""
+    try:
+        connection.execute(text("ALTER TABLE sessions ADD COLUMN file_hash VARCHAR"))
+    except Exception:
+        pass
+    try:
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_sessions_file_hash ON sessions(file_hash)"))
+    except Exception:
+        pass
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate)

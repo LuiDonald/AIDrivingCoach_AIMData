@@ -48,7 +48,11 @@ cross_router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 
 async def _load_session_data(session_id: str, db: AsyncSession):
-    """Load session from DB and parse the file."""
+    """Load session from DB and parse the file.
+
+    If no corners are stored in the DB (e.g. legacy data parsed before
+    lateral-g mapping was fixed), detect them live from the best lap.
+    """
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
@@ -88,6 +92,24 @@ async def _load_session_data(session_id: str, db: AsyncSession):
         )
         for c in db_corners
     ]
+
+    if not corners and laps:
+        from app.services.track_segmentation import detect_corners as _detect_corners
+        best_lap = min(laps, key=lambda l: l["lap_time_s"])
+        best_df = segment_lap_distance(parsed.df, best_lap["start_time_ms"], best_lap["end_time_ms"])
+        corners = _detect_corners(best_df)
+        for c in corners:
+            db_corner = Corner(
+                session_id=session_id,
+                corner_id=c.corner_id,
+                corner_type=c.corner_type,
+                start_distance_m=c.start_distance_m,
+                end_distance_m=c.end_distance_m,
+                apex_distance_m=c.apex_distance_m,
+            )
+            db.add(db_corner)
+        if corners:
+            await db.commit()
 
     return session, parsed, laps, corners
 

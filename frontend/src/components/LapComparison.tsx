@@ -378,6 +378,13 @@ function ComparisonResults({
   const shortA = `Lap ${result.lap_a}`;
   const shortB = isCross ? `Lap ${result.lap_b} (other)` : `Lap ${result.lap_b}`;
 
+  const firstPt = result.delta_trace[0] ?? {};
+  const hasChannel = (base: string) => ({
+    a: base + "_a" in firstPt,
+    b: base + "_b" in firstPt,
+    both: (base + "_a" in firstPt) && (base + "_b" in firstPt),
+  });
+
   return (
     <>
       {/* Summary cards */}
@@ -515,6 +522,11 @@ function ComparisonResults({
       {result.available_channels?.includes("throttle") && (
         <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
           <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Throttle %</h4>
+          {!hasChannel("throttle").both && (
+            <p className="text-[10px] text-amber-400/70 px-1 mb-1">
+              Only {hasChannel("throttle").a ? shortA : shortB} has throttle data
+            </p>
+          )}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -528,17 +540,13 @@ function ComparisonResults({
                   name === "throttle_a" ? shortA : shortB,
                 ]}
               />
-              <Line type="monotone" dataKey="throttle_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="throttle_a" />
-              <Line type="monotone" dataKey="throttle_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="throttle_b" />
+              {hasChannel("throttle").a && <Line type="monotone" dataKey="throttle_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="throttle_a" />}
+              {hasChannel("throttle").b && <Line type="monotone" dataKey="throttle_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="throttle_b" />}
             </LineChart>
           </ResponsiveContainer>
           <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
-            </span>
+            {hasChannel("throttle").a && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}</span>}
+            {hasChannel("throttle").b && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}</span>}
           </div>
         </div>
       )}
@@ -547,6 +555,11 @@ function ComparisonResults({
       {result.available_channels?.includes("brake") && (
         <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
           <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Brake Pressure</h4>
+          {!hasChannel("brake").both && (
+            <p className="text-[10px] text-amber-400/70 px-1 mb-1">
+              Only {hasChannel("brake").a ? shortA : shortB} has brake data
+            </p>
+          )}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -560,17 +573,13 @@ function ComparisonResults({
                   name === "brake_a" ? shortA : shortB,
                 ]}
               />
-              <Line type="monotone" dataKey="brake_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="brake_a" />
-              <Line type="monotone" dataKey="brake_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="brake_b" />
+              {hasChannel("brake").a && <Line type="monotone" dataKey="brake_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="brake_a" />}
+              {hasChannel("brake").b && <Line type="monotone" dataKey="brake_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="brake_b" />}
             </LineChart>
           </ResponsiveContainer>
           <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
-            </span>
+            {hasChannel("brake").a && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}</span>}
+            {hasChannel("brake").b && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}</span>}
           </div>
         </div>
       )}
@@ -579,6 +588,11 @@ function ComparisonResults({
       {result.available_channels?.includes("steering") && (
         <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
           <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Steering Angle (deg)</h4>
+          {!hasChannel("steer").both && (
+            <p className="text-[10px] text-amber-400/70 px-1 mb-1">
+              Only {hasChannel("steer").a ? shortA : shortB} has steering data
+            </p>
+          )}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -593,17 +607,13 @@ function ComparisonResults({
                   name === "steer_a" ? shortA : shortB,
                 ]}
               />
-              <Line type="monotone" dataKey="steer_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="steer_a" />
-              <Line type="monotone" dataKey="steer_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="steer_b" />
+              {hasChannel("steer").a && <Line type="monotone" dataKey="steer_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="steer_a" />}
+              {hasChannel("steer").b && <Line type="monotone" dataKey="steer_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="steer_b" />}
             </LineChart>
           </ResponsiveContainer>
           <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}
-            </span>
+            {hasChannel("steer").a && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}</span>}
+            {hasChannel("steer").b && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}</span>}
           </div>
         </div>
       )}

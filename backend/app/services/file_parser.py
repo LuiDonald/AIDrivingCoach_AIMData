@@ -35,6 +35,8 @@ KNOWN_CHANNEL_ALIASES = {
     # Acceleration -- AIM CSV uses LateralAcc/InlineAcc (body), GPS_LatAcc/GPS_LonAcc (GPS-derived)
     "GPS_LatAcc": "lateral_g",
     "GPS_LonAcc": "longitudinal_g",
+    "GPS_LateralAcc": "lateral_g",
+    "GPS_InlineAcc": "longitudinal_g",
     "LateralAcc": "lateral_g_body",
     "InlineAcc": "longitudinal_g_body",
     "VerticalAcc": "vertical_g",
@@ -159,6 +161,19 @@ def _compute_distance(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _ensure_g_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure lateral_g and longitudinal_g columns exist.
+
+    Falls back to body-fixed accelerometer channels if GPS-derived
+    accelerations are not available.
+    """
+    if "lateral_g" not in df.columns and "lateral_g_body" in df.columns:
+        df["lateral_g"] = df["lateral_g_body"]
+    if "longitudinal_g" not in df.columns and "longitudinal_g_body" in df.columns:
+        df["longitudinal_g"] = df["longitudinal_g_body"]
+    return df
+
+
 def _convert_xrk_speeds(df: pd.DataFrame) -> pd.DataFrame:
     """Convert XRK/XRZ speed channels to a unified speed_kph column.
 
@@ -191,6 +206,7 @@ def parse_xrk(file_path: str) -> ParsedSession:
     df = merged.to_pandas()
     df = _normalize_columns(df)
     df = _convert_xrk_speeds(df)
+    df = _ensure_g_columns(df)
 
     laps = []
     if log.laps and log.laps.num_rows > 0:

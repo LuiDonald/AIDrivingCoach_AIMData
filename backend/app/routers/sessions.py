@@ -1,5 +1,6 @@
 """Session management: upload, list, get details, update metadata."""
 
+import hashlib
 import uuid
 import shutil
 from pathlib import Path
@@ -32,12 +33,26 @@ async def upload_session(
     if ext not in (".xrk", ".xrz", ".csv"):
         raise HTTPException(400, f"Unsupported file type: {ext}. Use .xrk, .xrz, or .csv")
 
+    file_bytes = await file.read()
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    existing = await db.execute(select(Session).where(Session.file_hash == file_hash))
+    existing_session = existing.scalar_one_or_none()
+    if existing_session:
+        raise HTTPException(
+            409,
+            detail={
+                "message": f"This file has already been uploaded as '{existing_session.filename}'",
+                "existing_session_id": existing_session.id,
+            },
+        )
+
     session_id = str(uuid.uuid4())
     save_dir = Path(settings.upload_dir) / session_id
     save_dir.mkdir(parents=True, exist_ok=True)
-    file_path = save_dir / file.filename
+    file_path = save_dir / (file.filename or "unknown")
     with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        f.write(file_bytes)
 
     try:
         parsed = parse_file(str(file_path))
@@ -71,6 +86,7 @@ async def upload_session(
         id=session_id,
         filename=file.filename or "unknown",
         file_path=str(file_path),
+        file_hash=file_hash,
         track_name=track_name,
         venue=track_name,
         session_date=session_date,
@@ -235,3 +251,19 @@ async def update_metadata(
         session.driver_name = metadata.driver_name
     await db.commit()
     return {"status": "updated"}
+
+
+@router.delete("/{session_id}")
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a session and its associated files."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    upload_dir = Path(settings.upload_dir) / session_id
+    shutil.rmtree(upload_dir, ignore_errors=True)
+
+    await db.delete(session)
+    await db.commit()
+    return {"status": "deleted"}

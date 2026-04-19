@@ -2,6 +2,15 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const OPENAI_KEY_STORAGE = "aim_openai_api_key";
 
+export class DuplicateSessionError extends Error {
+  existingSessionId: string;
+  constructor(message: string, existingSessionId: string) {
+    super(message);
+    this.name = "DuplicateSessionError";
+    this.existingSessionId = existingSessionId;
+  }
+}
+
 export function getStoredApiKey(): string {
   if (typeof window === "undefined") return "";
   return localStorage.getItem(OPENAI_KEY_STORAGE) || "";
@@ -79,10 +88,32 @@ export async function uploadSession(file: File, metadata?: Record<string, unknow
   if (metadata) {
     formData.append("metadata_json", JSON.stringify(metadata));
   }
-  return request<SessionResponse>("/api/sessions", {
+
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+
+  const res = await fetch(`${API_BASE}/api/sessions`, {
     method: "POST",
+    headers,
     body: formData,
   });
+
+  if (res.status === 409) {
+    const body = await res.json();
+    const detail = body.detail || {};
+    throw new DuplicateSessionError(
+      detail.message || "This file has already been uploaded",
+      detail.existing_session_id || "",
+    );
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+
+  return res.json();
 }
 
 export async function listSessions(): Promise<SessionResponse[]> {
@@ -91,6 +122,10 @@ export async function listSessions(): Promise<SessionResponse[]> {
 
 export async function getSession(id: string): Promise<SessionResponse> {
   return request<SessionResponse>(`/api/sessions/${id}`);
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  await request(`/api/sessions/${id}`, { method: "DELETE" });
 }
 
 export async function getLaps(sessionId: string): Promise<LapSummary[]> {
