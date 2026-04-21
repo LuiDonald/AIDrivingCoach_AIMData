@@ -6,11 +6,13 @@ import { TheoreticalBest, LapSummary, formatLapTime } from "@/lib/api";
 interface TheoreticalBestBreakdownProps {
   theoretical: TheoreticalBest;
   laps: LapSummary[];
+  onHoverSector?: (range: [number, number] | null) => void;
 }
 
 export default function TheoreticalBestBreakdown({
   theoretical,
   laps,
+  onHoverSector,
 }: TheoreticalBestBreakdownProps) {
   const [expanded, setExpanded] = useState(true);
 
@@ -80,7 +82,11 @@ export default function TheoreticalBestBreakdown({
               return (
                 <div
                   key={i}
-                  className="relative rounded-lg overflow-hidden"
+                  className="relative rounded-lg overflow-hidden cursor-pointer transition-colors hover:bg-gray-700/30"
+                  onMouseEnter={() =>
+                    onHoverSector?.([seg.segment_start_m, seg.segment_end_m])
+                  }
+                  onMouseLeave={() => onHoverSector?.(null)}
                 >
                   {/* Gain bar background */}
                   {delta > 0.001 && (
@@ -187,7 +193,14 @@ export default function TheoreticalBestBreakdown({
                     {segments.map((seg, i) => {
                       const sectorBest = seg.best_time_s;
                       return (
-                        <tr key={i}>
+                        <tr
+                          key={i}
+                          className="cursor-pointer hover:bg-gray-700/30 transition-colors"
+                          onMouseEnter={() =>
+                            onHoverSector?.([seg.segment_start_m, seg.segment_end_m])
+                          }
+                          onMouseLeave={() => onHoverSector?.(null)}
+                        >
                           <td className="py-1.5 pr-2 text-gray-400 whitespace-nowrap sticky left-0 bg-gray-800/50">
                             <span className="inline-flex items-center gap-1.5">
                               <span

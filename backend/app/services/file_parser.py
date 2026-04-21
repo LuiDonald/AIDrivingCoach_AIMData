@@ -637,3 +637,20 @@ def parse_file(file_path: str) -> ParsedSession:
         return parse_csv(file_path)
     else:
         raise ValueError(f"Unsupported file format: {ext}. Supported: .xrk, .xrz, .csv")
+
+
+def parse_file_bytes(filename: str, content: bytes) -> ParsedSession:
+    """Parse telemetry data from in-memory bytes using a temporary file."""
+    import tempfile
+    ext = Path(filename).suffix.lower()
+    if ext not in (".xrk", ".xrz", ".csv"):
+        raise ValueError(f"Unsupported file format: {ext}. Supported: .xrk, .xrz, .csv")
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        return parse_file(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

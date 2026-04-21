@@ -2,15 +2,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const OPENAI_KEY_STORAGE = "aim_openai_api_key";
 
-export class DuplicateSessionError extends Error {
-  existingSessionId: string;
-  constructor(message: string, existingSessionId: string) {
-    super(message);
-    this.name = "DuplicateSessionError";
-    this.existingSessionId = existingSessionId;
-  }
-}
-
 export function getStoredApiKey(): string {
   if (typeof window === "undefined") return "";
   return localStorage.getItem(OPENAI_KEY_STORAGE) || "";
@@ -55,22 +46,7 @@ export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; 
   return res.json();
 }
 
-// --- Sessions ---
-
-export interface SessionResponse {
-  id: string;
-  filename: string;
-  track_name: string | null;
-  venue: string | null;
-  session_date: string | null;
-  device_model: string | null;
-  num_laps: number;
-  best_lap_time_s: number | null;
-  best_lap_number: number | null;
-  channels_available: string[];
-  created_at: string;
-  metadata: Record<string, unknown> | null;
-}
+// --- Analysis (stateless) ---
 
 export interface LapSummary {
   lap_number: number;
@@ -80,78 +56,6 @@ export interface LapSummary {
   avg_lateral_g: number | null;
   max_lateral_g: number | null;
   max_braking_g: number | null;
-}
-
-export async function uploadSession(file: File, metadata?: Record<string, unknown>): Promise<SessionResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (metadata) {
-    formData.append("metadata_json", JSON.stringify(metadata));
-  }
-
-  const apiKey = getStoredApiKey();
-  const headers: Record<string, string> = {};
-  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
-
-  const res = await fetch(`${API_BASE}/api/sessions`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
-
-  if (res.status === 409) {
-    const body = await res.json();
-    const detail = body.detail || {};
-    throw new DuplicateSessionError(
-      detail.message || "This file has already been uploaded",
-      detail.existing_session_id || "",
-    );
-  }
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status}: ${body}`);
-  }
-
-  return res.json();
-}
-
-export async function listSessions(): Promise<SessionResponse[]> {
-  return request<SessionResponse[]>("/api/sessions");
-}
-
-export async function getSession(id: string): Promise<SessionResponse> {
-  return request<SessionResponse>(`/api/sessions/${id}`);
-}
-
-export async function deleteSession(id: string): Promise<void> {
-  await request(`/api/sessions/${id}`, { method: "DELETE" });
-}
-
-export async function getLaps(sessionId: string): Promise<LapSummary[]> {
-  return request<LapSummary[]>(`/api/sessions/${sessionId}/laps`);
-}
-
-// --- Analysis ---
-
-export interface SpeedTrace {
-  distance_m: number[];
-  speed_kph: number[];
-  time_ms: number[];
-}
-
-export async function getSpeedTraces(sessionId: string, lapNumbers: number[]): Promise<Record<string, SpeedTrace>> {
-  return request(`/api/sessions/${sessionId}/analysis/speed-trace?lap_numbers=${lapNumbers.join(",")}`);
-}
-
-export interface GGData {
-  lateral_g: number[];
-  longitudinal_g: number[];
-  speed_kph: number[] | null;
-}
-
-export async function getGGDiagram(sessionId: string, lapNumber: number): Promise<GGData> {
-  return request(`/api/sessions/${sessionId}/analysis/gg-diagram?lap_number=${lapNumber}`);
 }
 
 export interface SegmentSource {
@@ -174,10 +78,6 @@ export interface TheoreticalBest {
   segment_sources: SegmentSource[];
 }
 
-export async function getTheoreticalBest(sessionId: string): Promise<TheoreticalBest> {
-  return request(`/api/sessions/${sessionId}/analysis/theoretical-best`);
-}
-
 export interface ConsistencyReport {
   overall_score_pct: number;
   lap_time_std_s: number;
@@ -186,39 +86,121 @@ export interface ConsistencyReport {
   least_consistent_corners: number[];
 }
 
-export async function getConsistency(sessionId: string): Promise<ConsistencyReport> {
-  return request(`/api/sessions/${sessionId}/analysis/consistency`);
+export interface CornerSuggestion {
+  corner_id: number;
+  corner_label: string;
+  category: string;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  suggestion: string;
+  estimated_gain_s: number | null;
+  data: Record<string, number>;
 }
 
-export interface CornerInfo {
+export interface CornerSuggestionsResponse {
+  suggestions: CornerSuggestion[];
+  total_estimated_gain_s: number;
+  num_corners: number;
+  track_name: string;
+  summary: string;
+}
+
+export interface TrackCornerInfo {
   corner_id: number;
   corner_type: string;
-  start_distance_m: number;
-  end_distance_m: number;
   apex_distance_m: number;
+  label: string;
+  name: string;
+  description: string;
 }
 
-export async function getCorners(sessionId: string): Promise<CornerInfo[]> {
-  return request(`/api/sessions/${sessionId}/analysis/corners`);
+export interface TrackInfo {
+  track_name: string;
+  track_matched: boolean;
+  corners: TrackCornerInfo[];
 }
 
-export interface CornerAnalysisData {
-  corner_id: number;
-  lap_number: number;
-  entry_speed_kph: number;
-  min_speed_kph: number;
-  exit_speed_kph: number;
-  max_lateral_g: number;
-  time_in_corner_s: number;
-  braking_start_distance_m: number | null;
-  throttle_start_distance_m: number | null;
+export interface GripAssessment {
+  rating: "good" | "reduced" | "poor";
+  notes: string[];
 }
 
-export async function getCornerAnalysis(sessionId: string, cornerId: number): Promise<CornerAnalysisData[]> {
-  return request(`/api/sessions/${sessionId}/analysis/corners/${cornerId}`);
+export interface WeatherData {
+  air_temp_f: number;
+  air_temp_c: number;
+  humidity_pct: number;
+  wind_speed_mph: number;
+  wind_speed_kmh: number;
+  wind_direction_deg: number;
+  wind_direction_label: string;
+  precipitation_mm: number;
+  surface_pressure_hpa: number;
+  cloud_cover_pct: number;
+  grip_assessment: GripAssessment;
+  source: string;
+  conditions_label: string;
 }
 
-// --- Track Map ---
+export interface AnalysisResult {
+  token: string;
+  filename: string;
+  track_name: string | null;
+  session_date: string | null;
+  device_model: string | null;
+  num_laps: number;
+  best_lap_time_s: number | null;
+  best_lap_number: number | null;
+  channels_available: string[];
+  laps: LapSummary[];
+  theoretical_best: TheoreticalBest | null;
+  consistency: ConsistencyReport | null;
+  corner_suggestions: CornerSuggestionsResponse | null;
+  track_info: TrackInfo | null;
+  weather: WeatherData | null;
+}
+
+export async function analyzeFile(file: File): Promise<AnalysisResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+
+  const res = await fetch(`${API_BASE}/api/analyze`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+
+  return res.json();
+}
+
+// --- Follow-up queries using token ---
+
+export interface SpeedTrace {
+  distance_m: number[];
+  speed_kph: number[];
+  time_ms: number[];
+}
+
+export async function getSpeedTraces(token: string, lapNumbers: number[]): Promise<Record<string, SpeedTrace>> {
+  return request(`/api/analyze/${token}/speed-trace?lap_numbers=${lapNumbers.join(",")}`);
+}
+
+export interface GGData {
+  lateral_g: number[];
+  longitudinal_g: number[];
+  speed_kph: number[] | null;
+}
+
+export async function getGGDiagram(token: string, lapNumber: number): Promise<GGData> {
+  return request(`/api/analyze/${token}/gg-diagram?lap_number=${lapNumber}`);
+}
 
 export interface TrackMapPoint {
   lat: number;
@@ -246,53 +228,8 @@ export interface TrackMapData {
   max_speed: number;
 }
 
-export async function getTrackMap(sessionId: string, lapNumber: number): Promise<TrackMapData> {
-  return request(`/api/sessions/${sessionId}/analysis/track-map?lap_number=${lapNumber}`);
-}
-
-// --- Track Info ---
-
-export interface TrackCornerInfo {
-  corner_id: number;
-  corner_type: string;
-  apex_distance_m: number;
-  label: string;
-  name: string;
-  description: string;
-}
-
-export interface TrackInfo {
-  track_name: string;
-  track_matched: boolean;
-  corners: TrackCornerInfo[];
-}
-
-export async function getTrackInfo(sessionId: string): Promise<TrackInfo> {
-  return request(`/api/sessions/${sessionId}/analysis/track-info`);
-}
-
-// --- Corner Suggestions ---
-
-export interface CornerSuggestion {
-  corner_id: number;
-  corner_label: string;
-  category: string;
-  priority: "HIGH" | "MEDIUM" | "LOW";
-  suggestion: string;
-  estimated_gain_s: number | null;
-  data: Record<string, number>;
-}
-
-export interface CornerSuggestionsResponse {
-  suggestions: CornerSuggestion[];
-  total_estimated_gain_s: number;
-  num_corners: number;
-  track_name: string;
-  summary: string;
-}
-
-export async function getCornerSuggestions(sessionId: string): Promise<CornerSuggestionsResponse> {
-  return request(`/api/sessions/${sessionId}/analysis/corner-suggestions`);
+export async function getTrackMap(token: string, lapNumber: number): Promise<TrackMapData> {
+  return request(`/api/analyze/${token}/track-map?lap_number=${lapNumber}`);
 }
 
 // --- Lap Comparison ---
@@ -345,26 +282,15 @@ export interface LapComparisonResult {
   available_channels?: string[];
 }
 
-export async function compareLaps(sessionId: string, lapA: number, lapB: number): Promise<LapComparisonResult> {
-  return request(`/api/sessions/${sessionId}/analysis/compare?lap_a=${lapA}&lap_b=${lapB}`);
+export async function compareLaps(token: string, lapA: number, lapB: number): Promise<LapComparisonResult> {
+  return request(`/api/analyze/${token}/compare?lap_a=${lapA}&lap_b=${lapB}`);
 }
 
-export interface CrossSessionComparisonResult extends LapComparisonResult {
-  session_a_id: string;
-  session_b_id: string;
-  session_a_name: string;
-  session_b_name: string;
-  session_a_date: string | null;
-  session_b_date: string | null;
-}
-
-export async function compareLapsCrossSession(
-  sessionA: string,
-  lapA: number,
-  sessionB: string,
-  lapB: number,
-): Promise<CrossSessionComparisonResult> {
-  return request(`/api/compare?session_a=${sessionA}&lap_a=${lapA}&session_b=${sessionB}&lap_b=${lapB}`);
+export async function compareLapsCross(
+  tokenA: string, lapA: number,
+  tokenB: string, lapB: number,
+): Promise<LapComparisonResult> {
+  return request(`/api/analyze/compare-cross?token_a=${tokenA}&lap_a=${lapA}&token_b=${tokenB}&lap_b=${lapB}`);
 }
 
 // --- Comparison Coaching ---
@@ -391,15 +317,16 @@ export interface ComparisonCoaching {
   plain_english_tips?: PlainEnglishTip[];
 }
 
-export async function getCompareCoaching(sessionId: string, lapA: number, lapB: number): Promise<ComparisonCoaching> {
-  return request(`/api/sessions/${sessionId}/analysis/compare/coaching?lap_a=${lapA}&lap_b=${lapB}`, { method: "POST" });
+export async function getCompareCoaching(token: string, lapA: number, lapB: number): Promise<ComparisonCoaching> {
+  return request(`/api/analyze/${token}/compare/coaching?lap_a=${lapA}&lap_b=${lapB}`, { method: "POST" });
 }
 
 export async function getCrossCompareCoaching(
-  sessionA: string, lapA: number, sessionB: string, lapB: number,
+  tokenA: string, lapA: number,
+  tokenB: string, lapB: number,
 ): Promise<ComparisonCoaching> {
   return request(
-    `/api/compare/coaching?session_a=${sessionA}&lap_a=${lapA}&session_b=${sessionB}&lap_b=${lapB}`,
+    `/api/analyze/compare-cross/coaching?token_a=${tokenA}&lap_a=${lapA}&token_b=${tokenB}&lap_b=${lapB}`,
     { method: "POST" },
   );
 }
@@ -418,8 +345,8 @@ export interface CoachingReport {
   overall_assessment: string;
 }
 
-export async function generateCoachingReport(sessionId: string): Promise<CoachingReport> {
-  return request(`/api/sessions/${sessionId}/coaching-report`, { method: "POST" });
+export async function generateCoachingReport(token: string): Promise<CoachingReport> {
+  return request(`/api/analyze/${token}/coaching-report`, { method: "POST" });
 }
 
 // --- Chat ---
@@ -435,39 +362,15 @@ export interface ChatResponse {
 }
 
 export async function sendChatMessage(
-  sessionId: string,
+  token: string,
   message: string,
   history: ChatMessage[] = [],
 ): Promise<ChatResponse> {
-  return request(`/api/sessions/${sessionId}/chat`, {
+  return request(`/api/analyze/${token}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message, conversation_history: history }),
+    body: JSON.stringify({ message, conversation_history: history }),
   });
-}
-
-export async function getChatHistory(sessionId: string): Promise<Array<{ role: string; content: string; created_at: string }>> {
-  return request(`/api/sessions/${sessionId}/chat/history`);
-}
-
-// --- Photos ---
-
-export async function uploadPhoto(
-  sessionId: string,
-  photoType: string,
-  file: File,
-): Promise<{ photo_type: string; analysis: Record<string, unknown> }> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("photo_type", photoType);
-  return request(`/api/sessions/${sessionId}/photos/analyze`, {
-    method: "POST",
-    body: formData,
-  });
-}
-
-export async function listPhotos(sessionId: string): Promise<Array<{ id: string; photo_type: string; analysis: Record<string, unknown> }>> {
-  return request(`/api/sessions/${sessionId}/photos`);
 }
 
 // --- Helpers ---

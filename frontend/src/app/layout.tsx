@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import BottomNav from "@/components/BottomNav";
 import SettingsButton from "@/components/SettingsButton";
 
 const geistSans = Geist({
@@ -16,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AIM Analyzer - AI Driving Coach",
-  description: "Analyze AIM SOLO / SOLO DL telemetry data with AI-powered coaching",
+  description: "Analyze motorsport telemetry data with AI-powered coaching. No account needed, no data stored.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -43,8 +42,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-950 text-white min-h-screen`}
       >
         <SettingsButton />
-        <main className="pb-20 md:pb-0">{children}</main>
-        <BottomNav />
+        <main>{children}</main>
       </body>
     </html>
   );

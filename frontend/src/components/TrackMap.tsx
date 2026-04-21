@@ -4,9 +4,10 @@ import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { getTrackMap, TrackMapData } from "@/lib/api";
 
 interface TrackMapProps {
-  sessionId: string;
+  token: string;
   lapNumber: number | null;
   highlightDistance?: number | null;
+  highlightRange?: [number, number] | null;
   onDistanceSelect?: (distance_m: number) => void;
 }
 
@@ -23,7 +24,7 @@ function speedToColor(speed: number, min: number, max: number): string {
   return `rgb(${r},${g},0)`;
 }
 
-export default function TrackMap({ sessionId, lapNumber, highlightDistance, onDistanceSelect }: TrackMapProps) {
+export default function TrackMap({ token, lapNumber, highlightDistance, highlightRange, onDistanceSelect }: TrackMapProps) {
   const [data, setData] = useState<TrackMapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +36,11 @@ export default function TrackMap({ sessionId, lapNumber, highlightDistance, onDi
     if (!lapNumber) return;
     setLoading(true);
     setError(null);
-    getTrackMap(sessionId, lapNumber)
+    getTrackMap(token, lapNumber)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [sessionId, lapNumber]);
+  }, [token, lapNumber]);
 
   const { projected, viewBox, cornerPositions } = useMemo(() => {
     if (!data || data.points.length === 0)
@@ -233,6 +234,27 @@ export default function TrackMap({ sessionId, lapNumber, highlightDistance, onDi
               stroke={speedToColor(pt.speed, data.min_speed, data.max_speed)}
               strokeWidth={3}
               strokeLinecap="round"
+              opacity={highlightRange ? 0.3 : 1}
+            />
+          );
+        })}
+
+        {highlightRange && projected.map((pt, i) => {
+          if (i === 0) return null;
+          const prev = projected[i - 1];
+          const inRange = pt.distance >= highlightRange[0] && pt.distance <= highlightRange[1];
+          if (!inRange) return null;
+          return (
+            <line
+              key={`hl-${i}`}
+              x1={prev.x}
+              y1={prev.y}
+              x2={pt.x}
+              y2={pt.y}
+              stroke="#22D3EE"
+              strokeWidth={7}
+              strokeLinecap="round"
+              opacity={0.7}
             />
           );
         })}

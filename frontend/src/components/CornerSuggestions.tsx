@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getCornerSuggestions, CornerSuggestionsResponse, CornerSuggestion } from "@/lib/api";
+import { useState } from "react";
+import { CornerSuggestionsResponse, CornerSuggestion } from "@/lib/api";
 
 interface CornerSuggestionsProps {
-  sessionId: string;
+  data: CornerSuggestionsResponse;
 }
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -48,7 +48,7 @@ function SuggestionCard({ suggestion }: { suggestion: CornerSuggestion }) {
       onClick={() => setExpanded(!expanded)}
       className="w-full text-left bg-gray-800/60 rounded-lg p-3 border border-gray-700/40 hover:border-gray-600/60 transition-colors touch-manipulation"
     >
-          <div className="flex items-start gap-2">
+      <div className="flex items-start gap-2">
         <span className="text-lg leading-none mt-0.5">
           {CATEGORY_ICONS[suggestion.category] || "🔵"}
         </span>
@@ -84,49 +84,14 @@ function SuggestionCard({ suggestion }: { suggestion: CornerSuggestion }) {
   );
 }
 
-export default function CornerSuggestions({ sessionId }: CornerSuggestionsProps) {
-  const [data, setData] = useState<CornerSuggestionsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function CornerSuggestions({ data }: CornerSuggestionsProps) {
   const [filter, setFilter] = useState<string>("all");
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    getCornerSuggestions(sessionId)
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
-
-  if (loading) {
-    return (
-      <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/30 flex items-center justify-center text-gray-400">
-        <svg className="animate-spin w-5 h-5 mr-2 text-blue-500" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        Analyzing corners...
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/30 text-center text-red-400 text-sm">
-        {error}
-      </div>
-    );
-  }
-
-  if (!data) return null;
 
   const categories = ["all", ...new Set(data.suggestions.map((s) => s.category))];
   const filtered = filter === "all" ? data.suggestions : data.suggestions.filter((s) => s.category === filter);
 
   return (
     <div className="bg-gray-800/50 rounded-xl border border-gray-700/30 overflow-hidden">
-      {/* Header */}
       <div className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-white">Where Can You Improve?</h3>
@@ -138,7 +103,6 @@ export default function CornerSuggestions({ sessionId }: CornerSuggestionsProps)
         </div>
         <p className="text-xs text-gray-500 mb-3">{data.summary}</p>
 
-        {/* Category filters */}
         <div className="flex gap-1 overflow-x-auto pb-1">
           {categories.map((cat) => (
             <button
@@ -158,7 +122,6 @@ export default function CornerSuggestions({ sessionId }: CornerSuggestionsProps)
         </div>
       </div>
 
-      {/* Suggestions list */}
       <div className="px-4 pb-4 space-y-2 max-h-[500px] overflow-y-auto">
         {filtered.length === 0 ? (
           <p className="text-center text-gray-500 text-sm py-4">

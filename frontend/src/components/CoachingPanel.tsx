@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { generateCoachingReport, CoachingReport } from "@/lib/api";
 
 interface Props {
-  sessionId: string;
+  token: string;
   cachedReport?: CoachingReport | null;
 }
 
@@ -23,7 +23,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   general: "G",
 };
 
-export default function CoachingPanel({ sessionId, cachedReport }: Props) {
+export default function CoachingPanel({ token, cachedReport }: Props) {
   const [report, setReport] = useState<CoachingReport | null>(cachedReport || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function CoachingPanel({ sessionId, cachedReport }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const r = await generateCoachingReport(sessionId);
+      const r = await generateCoachingReport(token);
       setReport(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate report");

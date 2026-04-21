@@ -294,11 +294,31 @@ async def generate_coaching_report(session_summary: dict, api_key: str | None = 
 
     formatted_summary = _format_session_times(session_summary)
 
+    weather_section = ""
+    weather = session_summary.get("weather")
+    if weather:
+        weather_section = f"""
+
+Weather Conditions during session:
+- Air Temperature: {weather.get('air_temp_f', 'N/A')} °F ({weather.get('air_temp_c', 'N/A')} °C)
+- Humidity: {weather.get('humidity_pct', 'N/A')}%
+- Wind: {weather.get('wind_speed_mph', 'N/A')} mph from {weather.get('wind_direction_label', 'N/A')}
+- Conditions: {weather.get('conditions_label', 'Unknown')}
+- Precipitation: {weather.get('precipitation_mm', 0)} mm
+- Grip Assessment: {weather.get('grip_assessment', {}).get('rating', 'unknown')}
+- Notes: {'; '.join(weather.get('grip_assessment', {}).get('notes', []))}
+
+Factor these weather conditions into your coaching advice:
+- Note if conditions may affect grip, tire temps, or engine power
+- Suggest adjustments for weather (e.g. more warm-up laps in cold, managing tire deg in heat)
+- If windy, mention which corners are most affected by crosswinds or headwinds
+"""
+
     prompt = f"""Analyze this motorsport session data and provide a coaching report.
 
 Session Data:
 {json.dumps(formatted_summary, indent=2)}
-
+{weather_section}
 The data may include "advanced_metrics_best_lap" with per-corner telemetry analysis:
 - friction_circle: grip utilization % — if low, the driver is leaving grip on the table
 - trail_braking: overlap % and smoothness score — higher is better trail-braking technique
@@ -314,7 +334,7 @@ Provide your response as a JSON object with:
 - "summary": 2-3 sentence overall assessment
 - "recommendations": array of objects with:
   - "priority": "HIGH", "MEDIUM", or "LOW"
-  - "category": "braking", "throttle", "line", "consistency", "setup", "trail_braking", "grip_utilization", "car_balance", or "general"
+  - "category": "braking", "throttle", "line", "consistency", "setup", "trail_braking", "grip_utilization", "car_balance", "weather", or "general"
   - "corner_id": corner number or null if general
   - "description": specific, actionable advice referencing turns, not distances (e.g. "Brake later going into Turn 3" not "Brake 15m later at 342m")
   - "estimated_gain_s": estimated time gain in seconds, or null

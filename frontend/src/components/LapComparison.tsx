@@ -15,272 +15,206 @@ import {
 } from "recharts";
 import {
   compareLaps,
-  compareLapsCrossSession,
+  compareLapsCross,
   getCompareCoaching,
   getCrossCompareCoaching,
-  listSessions,
-  getLaps,
   sendChatMessage,
   ChatMessage,
   LapComparisonResult,
   LapSummary,
-  SessionResponse,
+  AnalysisResult,
   ComparisonCoaching,
   formatLapTime,
   formatDelta,
 } from "@/lib/api";
 
+type CompareMode = "same" | "cross";
+
 interface LapComparisonProps {
-  sessionId: string;
+  token: string;
   laps: LapSummary[];
   selectedLaps: number[];
   onSelectLaps: (laps: number[]) => void;
   onHoverDistance?: (distance_m: number | null) => void;
+  otherSessions?: AnalysisResult[];
 }
 
-type CompareMode = "same" | "cross";
-
 export default function LapComparison({
-  sessionId,
+  token,
   laps,
   selectedLaps,
   onSelectLaps,
   onHoverDistance,
+  otherSessions = [],
 }: LapComparisonProps) {
   const [result, setResult] = useState<LapComparisonResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<CompareMode>("same");
   const [view, setView] = useState<"delta" | "speed">("delta");
 
-  // Same-session state
+  const [mode, setMode] = useState<CompareMode>("same");
   const [lapA, setLapA] = useState<number | "">(selectedLaps[0] ?? "");
   const [lapB, setLapB] = useState<number | "">(selectedLaps[1] ?? "");
 
   // Cross-session state
-  const [otherSessions, setOtherSessions] = useState<SessionResponse[]>([]);
-  const [otherSessionId, setOtherSessionId] = useState<string>("");
-  const [otherLaps, setOtherLaps] = useState<LapSummary[]>([]);
-  const [otherLapNum, setOtherLapNum] = useState<number | "">(""  );
-  const [loadingOtherLaps, setLoadingOtherLaps] = useState(false);
-  const [crossLapA, setCrossLapA] = useState<number | "">(selectedLaps[0] ?? "");
+  const [crossSessionIdx, setCrossSessionIdx] = useState(0);
+  const [crossLapB, setCrossLapB] = useState<number | "">("");
+
+  const crossSession = otherSessions[crossSessionIdx] ?? null;
+  const crossLaps = crossSession?.laps ?? [];
 
   useEffect(() => {
-    if (selectedLaps.length >= 2 && mode === "same") {
+    if (mode === "same" && selectedLaps.length >= 2) {
       setLapA(selectedLaps[0]);
       setLapB(selectedLaps[1]);
     }
   }, [selectedLaps, mode]);
 
-  // Load other sessions for cross-session mode
   useEffect(() => {
-    if (mode === "cross") {
-      listSessions()
-        .then((sessions) => {
-          setOtherSessions(sessions.filter((s) => s.id !== sessionId));
-        })
-        .catch(console.error);
+    if (crossSession && crossLaps.length > 0 && crossLapB === "") {
+      const best = crossLaps.reduce((a, b) => a.lap_time_s < b.lap_time_s ? a : b);
+      setCrossLapB(best.lap_number);
     }
-  }, [mode, sessionId]);
+  }, [crossSession, crossLaps, crossLapB]);
 
-  // Load laps for selected other session
+  // Same-session compare
   useEffect(() => {
-    if (!otherSessionId) {
-      setOtherLaps([]);
-      return;
-    }
-    setLoadingOtherLaps(true);
-    getLaps(otherSessionId)
-      .then(setOtherLaps)
-      .catch(console.error)
-      .finally(() => setLoadingOtherLaps(false));
-  }, [otherSessionId]);
-
-  // Run same-session comparison
-  useEffect(() => {
-    if (mode !== "same" || lapA === "" || lapB === "" || lapA === lapB) {
-      if (mode === "same") setResult(null);
+    if (mode !== "same") return;
+    if (lapA === "" || lapB === "" || lapA === lapB) {
+      setResult(null);
       return;
     }
     setLoading(true);
     setError(null);
-    compareLaps(sessionId, Number(lapA), Number(lapB))
+    compareLaps(token, Number(lapA), Number(lapB))
       .then((r) => {
         setResult(r);
         onSelectLaps([Number(lapA), Number(lapB)]);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [sessionId, lapA, lapB, mode]);
+  }, [token, lapA, lapB, mode]);
 
-  // Run cross-session comparison
-  const runCrossCompare = useCallback(() => {
-    if (crossLapA === "" || otherLapNum === "" || !otherSessionId) return;
+  // Cross-session compare
+  useEffect(() => {
+    if (mode !== "cross") return;
+    if (lapA === "" || crossLapB === "" || !crossSession) {
+      setResult(null);
+      return;
+    }
     setLoading(true);
     setError(null);
-    compareLapsCrossSession(sessionId, Number(crossLapA), otherSessionId, Number(otherLapNum))
-      .then((r) => {
-        setResult(r);
-        onSelectLaps([Number(crossLapA)]);
-      })
+    compareLapsCross(token, Number(lapA), crossSession.token, Number(crossLapB))
+      .then((r) => setResult(r))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [sessionId, crossLapA, otherSessionId, otherLapNum, onSelectLaps]);
+  }, [token, lapA, crossLapB, crossSession, mode]);
 
-  useEffect(() => {
-    if (mode === "cross") {
-      runCrossCompare();
-    }
-  }, [mode, crossLapA, otherLapNum, otherSessionId]);
+  const isCross = mode === "cross";
+  const sessionLabelA = "This Session";
+  const sessionLabelB = crossSession
+    ? (crossSession.track_name || crossSession.filename || "Other Session")
+    : "Other Session";
+
+  const coachingToken = token;
+  const coachingTokenB = isCross ? crossSession?.token : undefined;
+  const effectiveLapB = isCross ? Number(crossLapB) : Number(lapB);
 
   return (
     <div className="space-y-4">
-      {/* Mode toggle */}
-      <div className="flex gap-1 bg-gray-800/30 rounded-lg p-1">
-        <button
-          onClick={() => { setMode("same"); setResult(null); }}
-          className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors touch-manipulation ${
-            mode === "same" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
-          }`}
-        >
-          Same Session
-        </button>
-        <button
-          onClick={() => { setMode("cross"); setResult(null); }}
-          className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors touch-manipulation ${
-            mode === "cross" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
-          }`}
-        >
-          Cross Session
-        </button>
-      </div>
+      {/* Mode toggle — only show if other sessions are available */}
+      {otherSessions.length > 0 && (
+        <div className="flex gap-1 bg-gray-800/30 rounded-lg p-1">
+          <button
+            onClick={() => { setMode("same"); setResult(null); }}
+            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-colors touch-manipulation ${
+              mode === "same" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Same Session
+          </button>
+          <button
+            onClick={() => { setMode("cross"); setResult(null); }}
+            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-colors touch-manipulation ${
+              mode === "cross" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            Cross Session
+          </button>
+        </div>
+      )}
 
       {/* Lap selectors */}
       <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/30">
         <h3 className="text-sm font-semibold text-white mb-3">
-          {mode === "same" ? "Compare Two Laps" : "Compare Across Sessions"}
+          {isCross ? "Compare Across Sessions" : "Compare Two Laps"}
         </h3>
-
-        {mode === "same" ? (
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <label className="text-[11px] text-gray-500 uppercase tracking-wider mb-1 block">
-                Reference Lap (A)
-              </label>
-              <select
-                value={lapA}
-                onChange={(e) => setLapA(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="">Select lap...</option>
-                {laps.map((lap) => (
-                  <option key={lap.lap_number} value={lap.lap_number}>
-                    Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
-                    {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-end pb-2 text-gray-500 font-bold text-lg">vs</div>
-            <div className="flex-1">
-              <label className="text-[11px] text-gray-500 uppercase tracking-wider mb-1 block">
-                Comparison Lap (B)
-              </label>
-              <select
-                value={lapB}
-                onChange={(e) => setLapB(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="">Select lap...</option>
-                {laps.map((lap) => (
-                  <option key={lap.lap_number} value={lap.lap_number}>
-                    Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
-                    {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <label className="text-[11px] text-gray-500 uppercase tracking-wider mb-1 block">
+              {isCross ? `Reference Lap (${sessionLabelA})` : "Reference Lap (A)"}
+            </label>
+            <select
+              value={lapA}
+              onChange={(e) => setLapA(e.target.value === "" ? "" : Number(e.target.value))}
+              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">Select lap...</option>
+              {laps.map((lap) => (
+                <option key={lap.lap_number} value={lap.lap_number}>
+                  Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
+                  {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {/* Row 1: This session's lap */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
-                <label className="text-[11px] text-blue-400 uppercase tracking-wider mb-1 block">
-                  This Session — Lap (A)
-                </label>
-                <select
-                  value={crossLapA}
-                  onChange={(e) => setCrossLapA(e.target.value === "" ? "" : Number(e.target.value))}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">Select lap...</option>
-                  {laps.map((lap) => (
-                    <option key={lap.lap_number} value={lap.lap_number}>
-                      Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
-                      {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-end pb-2 text-gray-500 font-bold text-lg">vs</div>
-              <div className="flex-1">
-                <label className="text-[11px] text-orange-400 uppercase tracking-wider mb-1 block">
+          <div className="flex items-end pb-2 text-gray-500 font-bold text-lg">vs</div>
+          <div className="flex-1">
+            {isCross && otherSessions.length > 0 && (
+              <div className="mb-2">
+                <label className="text-[11px] text-gray-500 uppercase tracking-wider mb-1 block">
                   Other Session
                 </label>
                 <select
-                  value={otherSessionId}
+                  value={crossSessionIdx}
                   onChange={(e) => {
-                    setOtherSessionId(e.target.value);
-                    setOtherLapNum("");
+                    const idx = Number(e.target.value);
+                    setCrossSessionIdx(idx);
+                    setCrossLapB("");
                   }}
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                 >
-                  <option value="">Select session...</option>
-                  {otherSessions.map((s) => (
-                    <option key={s.id} value={s.id}>
+                  {otherSessions.map((s, i) => (
+                    <option key={s.token} value={i}>
                       {s.track_name || s.filename}
-                      {s.session_date
-                        ? ` — ${new Date(s.session_date).toLocaleDateString()}`
-                        : ""}
-                      {s.best_lap_time_s
-                        ? ` (${formatLapTime(s.best_lap_time_s)})`
-                        : ""}
+                      {s.best_lap_time_s ? ` — ${formatLapTime(s.best_lap_time_s)}` : ""}
                     </option>
                   ))}
                 </select>
               </div>
-            </div>
-
-            {/* Row 2: Other session's lap */}
-            {otherSessionId && (
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="flex-1 sm:ml-[calc(50%+18px)]">
-                  <label className="text-[11px] text-orange-400 uppercase tracking-wider mb-1 block">
-                    Lap (B) from other session
-                  </label>
-                  {loadingOtherLaps ? (
-                    <div className="text-xs text-gray-500 py-2">Loading laps...</div>
-                  ) : (
-                    <select
-                      value={otherLapNum}
-                      onChange={(e) => setOtherLapNum(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="">Select lap...</option>
-                      {otherLaps.map((lap) => (
-                        <option key={lap.lap_number} value={lap.lap_number}>
-                          Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
-                          {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
             )}
+            <label className="text-[11px] text-gray-500 uppercase tracking-wider mb-1 block">
+              {isCross ? `Comparison Lap (${sessionLabelB})` : "Comparison Lap (B)"}
+            </label>
+            <select
+              value={isCross ? crossLapB : lapB}
+              onChange={(e) => {
+                const v = e.target.value === "" ? "" as const : Number(e.target.value);
+                if (isCross) setCrossLapB(v);
+                else setLapB(v);
+              }}
+              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">Select lap...</option>
+              {(isCross ? crossLaps : laps).map((lap) => (
+                <option key={lap.lap_number} value={lap.lap_number}>
+                  Lap {lap.lap_number} — {formatLapTime(lap.lap_time_s)}
+                  {lap.delta_to_best_s === 0 ? " (BEST)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
-        )}
+        </div>
       </div>
 
       {loading && (
@@ -300,9 +234,11 @@ export default function LapComparison({
           result={result}
           view={view}
           setView={setView}
-          mode={mode}
-          sessionId={sessionId}
-          otherSessionId={otherSessionId}
+          token={coachingToken}
+          tokenB={coachingTokenB}
+          isCross={isCross}
+          labelA={isCross ? `${sessionLabelA} Lap ${lapA}` : `Lap ${result.lap_a}`}
+          labelB={isCross ? `${sessionLabelB} Lap ${crossLapB}` : `Lap ${result.lap_b}`}
           onHoverDistance={onHoverDistance}
         />
       )}
@@ -314,17 +250,21 @@ function ComparisonResults({
   result,
   view,
   setView,
-  mode,
-  sessionId,
-  otherSessionId,
+  token,
+  tokenB,
+  isCross,
+  labelA,
+  labelB,
   onHoverDistance,
 }: {
-  result: LapComparisonResult & { session_a_name?: string; session_b_name?: string; session_a_date?: string | null; session_b_date?: string | null };
+  result: LapComparisonResult;
   view: "delta" | "speed";
   setView: (v: "delta" | "speed") => void;
-  mode: CompareMode;
-  sessionId: string;
-  otherSessionId: string;
+  token: string;
+  tokenB?: string;
+  isCross: boolean;
+  labelA: string;
+  labelB: string;
   onHoverDistance?: (distance_m: number | null) => void;
 }) {
   const [coaching, setCoaching] = useState<ComparisonCoaching | null>(null);
@@ -355,10 +295,10 @@ function ComparisonResults({
     setCoachError(null);
     try {
       let data: ComparisonCoaching;
-      if (mode === "cross" && otherSessionId) {
-        data = await getCrossCompareCoaching(sessionId, result.lap_a, otherSessionId, result.lap_b);
+      if (isCross && tokenB) {
+        data = await getCrossCompareCoaching(token, result.lap_a, tokenB, result.lap_b);
       } else {
-        data = await getCompareCoaching(sessionId, result.lap_a, result.lap_b);
+        data = await getCompareCoaching(token, result.lap_a, result.lap_b);
       }
       setCoaching(data);
     } catch (e) {
@@ -366,17 +306,10 @@ function ComparisonResults({
     } finally {
       setCoachLoading(false);
     }
-  }, [mode, sessionId, otherSessionId, result.lap_a, result.lap_b]);
+  }, [token, tokenB, isCross, result.lap_a, result.lap_b]);
 
-  const isCross = mode === "cross" && result.session_a_name;
-  const labelA = isCross
-    ? `Lap ${result.lap_a} — ${result.session_a_name}${result.session_a_date ? ` (${new Date(result.session_a_date).toLocaleDateString()})` : ""}`
-    : `Lap ${result.lap_a}`;
-  const labelB = isCross
-    ? `Lap ${result.lap_b} — ${result.session_b_name}${result.session_b_date ? ` (${new Date(result.session_b_date).toLocaleDateString()})` : ""}`
-    : `Lap ${result.lap_b}`;
-  const shortA = `Lap ${result.lap_a}`;
-  const shortB = isCross ? `Lap ${result.lap_b} (other)` : `Lap ${result.lap_b}`;
+  const shortA = labelA;
+  const shortB = labelB;
 
   const firstPt = result.delta_trace[0] ?? {};
   const hasChannel = (base: string) => ({
@@ -391,7 +324,7 @@ function ComparisonResults({
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-blue-500/10 rounded-xl p-3 border border-blue-500/20 text-center">
           <div className="text-[10px] text-blue-400 mb-0.5 truncate" title={labelA}>
-            {isCross ? labelA : `Lap ${result.lap_a} (Ref)`}
+            {`${shortA} (Ref)`}
           </div>
           <div className="text-lg font-mono font-bold text-blue-400">
             {formatLapTime(result.lap_a_time_s)}
@@ -415,7 +348,7 @@ function ComparisonResults({
         </div>
         <div className="bg-orange-500/10 rounded-xl p-3 border border-orange-500/20 text-center">
           <div className="text-[10px] text-orange-400 mb-0.5 truncate" title={labelB}>
-            {isCross ? labelB : `Lap ${result.lap_b}`}
+            {shortB}
           </div>
           <div className="text-lg font-mono font-bold text-orange-400">
             {formatLapTime(result.lap_b_time_s)}
@@ -754,7 +687,7 @@ function ComparisonResults({
             {coaching.progression_notes && (
               <div className="bg-gray-700/30 rounded-lg p-3 border border-gray-600/30">
                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-1 font-semibold">
-                  {isCross ? "Progress Notes" : "Session Notes"}
+                  Session Notes
                 </p>
                 <p className="text-sm text-gray-300">{String(coaching.progression_notes ?? "")}</p>
               </div>
@@ -830,10 +763,12 @@ function ComparisonResults({
       {/* Inline follow-up chat — appears after coaching analysis */}
       {coaching && (
         <CoachingChat
-          sessionId={sessionId}
+          token={token}
           coaching={coaching}
           lapA={result.lap_a}
           lapB={result.lap_b}
+          labelA={shortA}
+          labelB={shortB}
         />
       )}
     </>
@@ -842,15 +777,19 @@ function ComparisonResults({
 
 
 function CoachingChat({
-  sessionId,
+  token,
   coaching,
   lapA,
   lapB,
+  labelA,
+  labelB,
 }: {
-  sessionId: string;
+  token: string;
   coaching: ComparisonCoaching;
   lapA: number;
   lapB: number;
+  labelA: string;
+  labelB: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -864,7 +803,7 @@ function CoachingChat({
   const contextSeed: ChatMessage[] = [
     {
       role: "user",
-      content: `I just compared Lap ${lapA} vs Lap ${lapB}. Here is the AI coaching analysis:\n\nHeadline: ${coaching.headline}\n\nKey findings:\n${coaching.key_findings.map((f) => `- ${f.corner_label}: ${f.finding} (${f.advice})`).join("\n")}\n\nPlain english tips:\n${(coaching.plain_english_tips || []).map((t) => `- ${t.tip}: ${t.why}`).join("\n")}\n\nI have follow-up questions about this analysis.`,
+      content: `I just compared ${labelA} vs ${labelB}. Here is the AI coaching analysis:\n\nHeadline: ${coaching.headline}\n\nKey findings:\n${coaching.key_findings.map((f) => `- ${f.corner_label}: ${f.finding} (${f.advice})`).join("\n")}\n\nPlain english tips:\n${(coaching.plain_english_tips || []).map((t) => `- ${t.tip}: ${t.why}`).join("\n")}\n\nI have follow-up questions about this analysis.`,
     },
     {
       role: "assistant",
@@ -882,7 +821,7 @@ function CoachingChat({
 
     try {
       const fullHistory = [...contextSeed, ...updated];
-      const resp = await sendChatMessage(sessionId, text, fullHistory.slice(0, -1));
+      const resp = await sendChatMessage(token, text, fullHistory.slice(0, -1));
       setMessages([...updated, { role: "assistant", content: resp.message }]);
     } catch {
       setMessages([
@@ -914,7 +853,6 @@ function CoachingChat({
       </div>
 
       <div className="max-h-[400px] overflow-y-auto">
-        {/* Quick question chips — only shown if no messages yet */}
         {messages.length === 0 && (
           <div className="px-4 pt-3 pb-1 flex flex-wrap gap-1.5">
             {quickQuestions.map((q) => (
@@ -929,7 +867,6 @@ function CoachingChat({
           </div>
         )}
 
-        {/* Messages */}
         <div className="px-4 py-3 space-y-2.5">
           {messages.map((msg, i) => (
             <div
@@ -962,7 +899,6 @@ function CoachingChat({
         </div>
       </div>
 
-      {/* Input */}
       <div className="px-3 py-2.5 border-t border-gray-700/30">
         <form
           onSubmit={(e) => {

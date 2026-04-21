@@ -190,9 +190,11 @@ def compute_theoretical_best(
                 "per_lap_times": per_lap_times,
             })
 
-    # Merge each straight with the following corner into a single sector.
-    # This gives drivers one sector per corner (approach + corner).
+    # Merge each straight with the following corner, then group into 3-4 sectors.
     merged = _merge_sectors(best_segment_times)
+    total_time = sum(s["best_time_s"] for s in merged)
+    target_sectors = 4 if total_time > 100 else 3
+    merged = _group_sectors_by_time(merged, target_time_s=total_time / target_sectors)
 
     theoretical = sum(s["best_time_s"] for s in merged)
     actual_best = ref_lap["lap_time_s"]
@@ -270,6 +272,60 @@ def _combine_two(a: dict, b: dict) -> dict:
         "corner_id": corner_seg.get("corner_id"),
         "per_lap_times": combined_per_lap,
     }
+
+
+def _group_sectors_by_time(sectors: list[dict], target_time_s: float = 18.0) -> list[dict]:
+    """Merge adjacent sectors so each group is roughly *target_time_s* long.
+
+    This keeps corner boundaries as natural split points while reducing the
+    total number of sectors to something digestible (e.g. 5-8 instead of 14).
+    Always relabels sectors as "Sector N (Turn X, Y, Z)".
+    """
+    if len(sectors) <= 3:
+        groups = [[s] for s in sectors]
+    else:
+        groups = []
+        current_group: list[dict] = []
+        current_time = 0.0
+
+        for sec in sectors:
+            current_group.append(sec)
+            current_time += sec["best_time_s"]
+
+            if current_time >= target_time_s:
+                groups.append(current_group)
+                current_group = []
+                current_time = 0.0
+
+        if current_group:
+            if groups and current_time < target_time_s * 0.4:
+                groups[-1].extend(current_group)
+            else:
+                groups.append(current_group)
+
+    result: list[dict] = []
+    for idx, group in enumerate(groups, start=1):
+        combined = group[0]
+        for sec in group[1:]:
+            combined = _combine_two(combined, sec)
+
+        turn_ids = []
+        for sec in group:
+            cid = sec.get("corner_id")
+            if cid is not None:
+                turn_ids.append(str(cid))
+        if len(turn_ids) > 2:
+            combined["label"] = f"Turn {turn_ids[0]} - {turn_ids[-1]}"
+        elif len(turn_ids) == 2:
+            combined["label"] = f"Turn {turn_ids[0]} & {turn_ids[1]}"
+        elif len(turn_ids) == 1:
+            combined["label"] = f"Turn {turn_ids[0]}"
+        else:
+            combined["label"] = f"Sector {idx}"
+
+        result.append(combined)
+
+    return result
 
 
 def compute_consistency(

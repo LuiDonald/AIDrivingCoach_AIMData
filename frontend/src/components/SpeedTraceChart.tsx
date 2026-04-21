@@ -19,22 +19,22 @@ const LAP_COLORS = [
 ];
 
 interface Props {
-  sessionId: string;
+  token: string;
   lapNumbers: number[];
 }
 
-export default function SpeedTraceChart({ sessionId, lapNumbers }: Props) {
+export default function SpeedTraceChart({ token, lapNumbers }: Props) {
   const [traces, setTraces] = useState<Record<string, SpeedTrace>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (lapNumbers.length === 0) return;
     setLoading(true);
-    getSpeedTraces(sessionId, lapNumbers)
+    getSpeedTraces(token, lapNumbers)
       .then(setTraces)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [sessionId, lapNumbers]);
+  }, [token, lapNumbers]);
 
   if (lapNumbers.length === 0) {
     return (
