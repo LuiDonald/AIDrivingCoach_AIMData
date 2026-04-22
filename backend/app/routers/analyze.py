@@ -34,24 +34,17 @@ from app.services.weather_service import fetch_session_weather
 router = APIRouter(prefix="/api/analyze", tags=["analyze"])
 
 KPH_TO_MPH = 0.621371
-CACHE_TTL_S = 1800  # 30 minutes
 MAX_CACHE_ENTRIES = 50
 
 # ---------------------------------------------------------------------------
-# In-memory cache for parsed sessions
+# In-memory cache for parsed sessions (no TTL — sessions live until cleared
+# by the user or evicted when MAX_CACHE_ENTRIES is exceeded)
 # ---------------------------------------------------------------------------
 
 _cache: OrderedDict[str, tuple[float, ParsedSession, list, list[DetectedCorner], dict | None]] = OrderedDict()
 
 
 def _cache_cleanup():
-    now = _now()
-    while _cache:
-        key, (ts, *_) = next(iter(_cache.items()))
-        if now - ts > CACHE_TTL_S:
-            _cache.pop(key)
-        else:
-            break
     while len(_cache) > MAX_CACHE_ENTRIES:
         _cache.popitem(last=False)
 
@@ -64,11 +57,8 @@ def _cache_put(token: str, parsed: ParsedSession, laps: list, corners: list[Dete
 def _cache_get(token: str) -> tuple[ParsedSession, list, list[DetectedCorner]]:
     entry = _cache.get(token)
     if entry is None:
-        raise HTTPException(404, "Analysis session expired or not found. Please re-upload your file.")
-    ts, parsed, laps, corners, _weather = entry
-    if _now() - ts > CACHE_TTL_S:
-        _cache.pop(token, None)
-        raise HTTPException(410, "Analysis session expired. Please re-upload your file.")
+        raise HTTPException(404, "Analysis session not found. Please re-upload your file.")
+    _ts, parsed, laps, corners, _weather = entry
     return parsed, laps, corners
 
 
@@ -176,10 +166,17 @@ def _build_corner_info(corners: list[DetectedCorner], known: dict | None) -> lis
 
 
 def _build_corner_suggestions(parsed, laps, corners, known):
-    """Compute data-driven corner improvement suggestions."""
-    laps = filter_flying_laps(laps)
-    if not corners:
+    """Compute data-driven corner improvement suggestions.
+
+    Anchors everything on the best lap vs the session-best at each corner,
+    so estimated gains are realistic and sum roughly to the theoretical best delta.
+    """
+    flying = filter_flying_laps(laps)
+    if not corners or not flying:
         return {"suggestions": [], "summary": "No corners detected.", "total_estimated_gain_s": 0, "num_corners": 0, "track_name": "Unknown"}
+
+    best_lap = min(flying, key=lambda l: l["lap_time_s"])
+    best_lap_num = best_lap["lap_number"]
 
     corner_names = _build_name_map(corners, known)
 
@@ -187,87 +184,87 @@ def _build_corner_suggestions(parsed, laps, corners, known):
     def _mph(kph): return kph * KPH_TO_MPH
 
     suggestions = []
+    total_corner_delta = 0.0
+
     for corner in corners:
         corner_data_all = []
-        for lap in laps:
+        best_lap_data = None
+        for lap in flying:
             lap_df = segment_lap_distance(parsed.df, lap["start_time_ms"], lap["end_time_ms"])
             analysis = analyze_corner_for_lap(lap_df, corner)
             if analysis:
                 analysis.lap_number = lap["lap_number"]
                 corner_data_all.append(analysis)
-        if len(corner_data_all) < 1:
+                if lap["lap_number"] == best_lap_num:
+                    best_lap_data = analysis
+        if len(corner_data_all) < 2 or best_lap_data is None:
             continue
 
-        best = min(corner_data_all, key=lambda x: x.time_in_corner_s)
-        worst = max(corner_data_all, key=lambda x: x.time_in_corner_s)
-        time_spread = worst.time_in_corner_s - best.time_in_corner_s
+        session_best = min(corner_data_all, key=lambda x: x.time_in_corner_s)
+        corner_delta = best_lap_data.time_in_corner_s - session_best.time_in_corner_s
+        if corner_delta < 0.01:
+            continue
+
+        total_corner_delta += corner_delta
         direction = "left" if corner.corner_type == "left" else "right"
         label = _label(corner.corner_id)
 
-        if best.braking_start_distance_m is not None and len(corner_data_all) > 1:
-            brake_points = [c.braking_start_distance_m for c in corner_data_all if c.braking_start_distance_m]
-            if brake_points:
-                latest_brake = max(brake_points)
-                earliest_brake = min(brake_points)
-                brake_diff = latest_brake - earliest_brake
-                if brake_diff > 5:
-                    brake_diff_ft = brake_diff * 3.281
-                    suggestions.append({
-                        "corner_id": corner.corner_id, "corner_label": label, "category": "braking",
-                        "priority": "HIGH" if brake_diff > 15 else "MEDIUM",
-                        "suggestion": f"Brake {brake_diff_ft:.0f} ft later at {label}.",
-                        "estimated_gain_s": round(time_spread * 0.4, 2) if time_spread > 0.05 else None,
-                        "data": {"best_brake_ft": round(latest_brake * 3.281, 1), "worst_brake_ft": round(earliest_brake * 3.281, 1), "delta_ft": round(brake_diff_ft, 1)},
-                    })
+        corner_suggestions = []
 
-        if len(corner_data_all) > 1:
-            entry_speeds = [c.entry_speed_kph for c in corner_data_all]
-            max_entry = _mph(max(entry_speeds))
-            min_entry = _mph(min(entry_speeds))
-            entry_diff = max_entry - min_entry
-            if entry_diff > 2:
-                suggestions.append({
-                    "corner_id": corner.corner_id, "corner_label": label, "category": "entry_speed",
-                    "priority": "HIGH" if entry_diff > 5 else "MEDIUM",
-                    "suggestion": f"Carry {entry_diff:.0f} mph more into {label} ({direction}). Fastest entry: {max_entry:.0f} mph.",
-                    "estimated_gain_s": round(time_spread * 0.3, 2) if time_spread > 0.05 else None,
-                    "data": {"best_entry_mph": round(max_entry, 1), "worst_entry_mph": round(min_entry, 1)},
+        if best_lap_data.braking_start_distance_m is not None and session_best.braking_start_distance_m is not None:
+            brake_diff = session_best.braking_start_distance_m - best_lap_data.braking_start_distance_m
+            if brake_diff > 5:
+                brake_diff_ft = brake_diff * 3.281
+                corner_suggestions.append({
+                    "corner_id": corner.corner_id, "corner_label": label, "category": "braking",
+                    "priority": "HIGH" if brake_diff > 15 else "MEDIUM",
+                    "suggestion": f"Brake {brake_diff_ft:.0f} ft later at {label}. On Lap {session_best.lap_number} you braked later and were {corner_delta:.2f}s faster.",
+                    "data": {"best_brake_ft": round(session_best.braking_start_distance_m * 3.281, 1), "your_brake_ft": round(best_lap_data.braking_start_distance_m * 3.281, 1), "delta_ft": round(brake_diff_ft, 1)},
                 })
 
-        min_speeds = [c.min_speed_kph for c in corner_data_all]
-        max_min_speed = _mph(max(min_speeds))
-        avg_min_speed = _mph(sum(min_speeds) / len(min_speeds))
-        if max_min_speed - avg_min_speed > 2:
-            suggestions.append({
-                "corner_id": corner.corner_id, "corner_label": label, "category": "apex_speed",
-                "priority": "MEDIUM",
-                "suggestion": f"Carry {max_min_speed - avg_min_speed:.0f} mph more through the apex at {label}.",
-                "estimated_gain_s": round(time_spread * 0.3, 2) if time_spread > 0.05 else None,
-                "data": {"best_apex_mph": round(max_min_speed, 1), "avg_apex_mph": round(avg_min_speed, 1)},
+        entry_diff = _mph(session_best.entry_speed_kph) - _mph(best_lap_data.entry_speed_kph)
+        if entry_diff > 2:
+            corner_suggestions.append({
+                "corner_id": corner.corner_id, "corner_label": label, "category": "entry_speed",
+                "priority": "HIGH" if entry_diff > 5 else "MEDIUM",
+                "suggestion": f"Carry {entry_diff:.0f} mph more into {label} ({direction}). On Lap {session_best.lap_number} you entered at {_mph(session_best.entry_speed_kph):.0f} mph vs {_mph(best_lap_data.entry_speed_kph):.0f} mph on your best lap.",
+                "data": {"target_entry_mph": round(_mph(session_best.entry_speed_kph), 1), "your_entry_mph": round(_mph(best_lap_data.entry_speed_kph), 1)},
             })
 
-        if len(corner_data_all) > 1:
-            exit_speeds = [c.exit_speed_kph for c in corner_data_all]
-            max_exit = _mph(max(exit_speeds))
-            min_exit = _mph(min(exit_speeds))
-            exit_diff = max_exit - min_exit
-            if exit_diff > 2:
-                suggestions.append({
-                    "corner_id": corner.corner_id, "corner_label": label, "category": "exit_speed",
-                    "priority": "HIGH" if exit_diff > 5 else "MEDIUM",
-                    "suggestion": f"Get {exit_diff:.0f} mph more exit speed out of {label}.",
-                    "estimated_gain_s": round(time_spread * 0.3, 2) if time_spread > 0.05 else None,
-                    "data": {"best_exit_mph": round(max_exit, 1), "worst_exit_mph": round(min_exit, 1)},
-                })
+        apex_diff = _mph(session_best.min_speed_kph) - _mph(best_lap_data.min_speed_kph)
+        if apex_diff > 2:
+            corner_suggestions.append({
+                "corner_id": corner.corner_id, "corner_label": label, "category": "apex_speed",
+                "priority": "MEDIUM",
+                "suggestion": f"Carry {apex_diff:.0f} mph more through the apex at {label}.",
+                "data": {"target_apex_mph": round(_mph(session_best.min_speed_kph), 1), "your_apex_mph": round(_mph(best_lap_data.min_speed_kph), 1)},
+            })
+
+        exit_diff = _mph(session_best.exit_speed_kph) - _mph(best_lap_data.exit_speed_kph)
+        if exit_diff > 2:
+            corner_suggestions.append({
+                "corner_id": corner.corner_id, "corner_label": label, "category": "exit_speed",
+                "priority": "HIGH" if exit_diff > 5 else "MEDIUM",
+                "suggestion": f"Get {exit_diff:.0f} mph more exit speed out of {label}.",
+                "data": {"target_exit_mph": round(_mph(session_best.exit_speed_kph), 1), "your_exit_mph": round(_mph(best_lap_data.exit_speed_kph), 1)},
+            })
+
+        # Split the corner's actual time delta across its suggestions
+        n = len(corner_suggestions)
+        if n > 0:
+            share = round(corner_delta / n, 2)
+            for s in corner_suggestions:
+                s["estimated_gain_s"] = share
+            suggestions.extend(corner_suggestions)
 
     priority_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     suggestions.sort(key=lambda s: (priority_order.get(s["priority"], 2), -(s.get("estimated_gain_s") or 0)))
-    total_gain = sum(s.get("estimated_gain_s") or 0 for s in suggestions)
+    total_gain = round(total_corner_delta, 2)
     track_name = known["full_name"] if known else "this session"
 
     return {
         "suggestions": suggestions,
-        "total_estimated_gain_s": round(total_gain, 2),
+        "total_estimated_gain_s": total_gain,
         "num_corners": len(corners),
         "track_name": track_name,
         "summary": f"Found {len(suggestions)} improvement opportunities across {len(corners)} corners at {track_name}.",
@@ -295,7 +292,11 @@ async def analyze_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(400, f"Failed to parse file: {e}")
 
-    laps = parsed.laps
+    all_laps = parsed.laps
+    # Drop lap 0 (out-lap) and the last lap (often an incomplete in-lap)
+    laps = [l for l in all_laps if l["lap_number"] != 0]
+    if len(laps) > 1:
+        laps = laps[:-1]
     best_lap = min(laps, key=lambda l: l["lap_time_s"]) if laps else None
 
     # Track matching (before corner detection so we can use DB corners)
@@ -422,6 +423,17 @@ async def analyze_file(file: UploadFile = File(...)):
         "track_info": track_info,
         "weather": weather,
     }
+
+
+# ---------------------------------------------------------------------------
+# Clear session
+# ---------------------------------------------------------------------------
+
+@router.delete("/{token}")
+async def clear_session(token: str):
+    """Remove a cached analysis session so the user can start fresh."""
+    removed = _cache.pop(token, None)
+    return {"cleared": removed is not None, "token": token}
 
 
 # ---------------------------------------------------------------------------
@@ -641,23 +653,57 @@ async def coaching_report(token: str, x_openai_key: str | None = Header(None)):
     track_name = known["full_name"] if known else parsed.metadata.get("Venue") or "Unknown"
 
     theoretical = compute_theoretical_best(parsed.df, laps, corners) if laps and corners else None
+
+    # Enrich theoretical best labels with track DB names
+    if theoretical and theoretical.get("segment_sources"):
+        name_map = _build_name_map(corners, known)
+        for seg in theoretical["segment_sources"]:
+            if seg.get("corner_id") and seg["corner_id"] in name_map:
+                seg["label"] = name_map[seg["corner_id"]]
+
     consistency = compute_consistency(parsed.df, laps, corners) if len(laps) > 1 and corners else None
 
     best_lap = min(laps, key=lambda l: l["lap_time_s"]) if laps else None
     advanced = compute_advanced_lap_metrics(parsed.df, best_lap, corners) if best_lap else None
+
+    # Build sector-by-sector comparison: best lap vs theoretical best
+    sector_comparison = []
+    if theoretical and theoretical.get("segment_sources") and best_lap:
+        best_lap_num = best_lap["lap_number"]
+        for seg in theoretical["segment_sources"]:
+            best_lap_time_in_sector = seg.get("per_lap_times", {}).get(best_lap_num)
+            time_lost = None
+            if best_lap_time_in_sector is not None:
+                time_lost = round(best_lap_time_in_sector - seg["best_time_s"], 3)
+            sector_comparison.append({
+                "sector_label": seg.get("label", "Unknown"),
+                "theoretical_best_s": seg["best_time_s"],
+                "from_lap": seg["from_lap"],
+                "best_lap_time_s": best_lap_time_in_sector,
+                "time_lost_s": time_lost,
+            })
+
+    # Corner suggestions (same data the frontend shows)
+    corner_suggestions = _build_corner_suggestions(parsed, laps, corners, known) if corners else None
+
+    # Filter to flying laps only for summaries
+    flying_laps = filter_flying_laps(laps)
 
     weather = _cache_get_weather(token)
 
     summary_data = {
         "track": track_name,
         "num_laps": len(laps),
+        "num_flying_laps": len(flying_laps),
         "best_lap_time_s": best_lap["lap_time_s"] if best_lap else None,
         "best_lap_number": best_lap["lap_number"] if best_lap else None,
         "channels": parsed.channels,
         "metadata": parsed.metadata or {},
         "theoretical_best": theoretical,
+        "sector_comparison": sector_comparison,
+        "corner_suggestions": corner_suggestions,
         "consistency": consistency,
-        "lap_summaries": [_convert_result_to_mph(compute_lap_summary(parsed.df, lap)) for lap in laps],
+        "lap_summaries": [_convert_result_to_mph(compute_lap_summary(parsed.df, lap)) for lap in flying_laps],
         "advanced_metrics_best_lap": _convert_result_to_mph(advanced) if advanced else None,
         "weather": weather,
     }

@@ -551,6 +551,40 @@ function ComparisonResults({
         </div>
       )}
 
+      {/* Yaw rate overlay chart */}
+      {result.available_channels?.includes("yaw") && (
+        <div className="bg-gray-800/50 rounded-xl p-2 md:p-4 border border-gray-700/30">
+          <h4 className="text-xs font-semibold text-gray-400 mb-1 px-1">Yaw Rate (deg/s)</h4>
+          {!hasChannel("yaw").both && (
+            <p className="text-[10px] text-amber-400/70 px-1 mb-1">
+              Only {hasChannel("yaw").a ? shortA : shortB} has yaw data
+            </p>
+          )}
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={result.delta_trace} onMouseMove={handleChartHover} onMouseLeave={handleChartLeave}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="distance_m" stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}m`} />
+              <YAxis stroke="#6B7280" fontSize={10} tickFormatter={(v) => `${v}°/s`} />
+              <ReferenceLine y={0} stroke="#6B7280" strokeDasharray="4 4" />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
+                labelFormatter={(v) => `${v}m`}
+                formatter={(value: number, name: string) => [
+                  `${value}°/s`,
+                  name === "yaw_a" ? shortA : shortB,
+                ]}
+              />
+              {hasChannel("yaw").a && <Line type="monotone" dataKey="yaw_a" stroke="#3B82F6" strokeWidth={1.5} dot={false} name="yaw_a" />}
+              {hasChannel("yaw").b && <Line type="monotone" dataKey="yaw_b" stroke="#F97316" strokeWidth={1.5} dot={false} name="yaw_b" />}
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex justify-center gap-4 mt-1 text-[10px] text-gray-500">
+            {hasChannel("yaw").a && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block rounded" /> {shortA}</span>}
+            {hasChannel("yaw").b && <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-orange-500 inline-block rounded" /> {shortB}</span>}
+          </div>
+        </div>
+      )}
+
       {/* Corner-by-corner table */}
       {result.corner_deltas.length > 0 && (
         <div className="bg-gray-800/50 rounded-xl border border-gray-700/30 overflow-hidden">

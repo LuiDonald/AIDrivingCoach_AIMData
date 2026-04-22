@@ -266,15 +266,25 @@ COACHING_TOOLS = [
 def _format_session_times(data: dict) -> dict:
     """Convert raw seconds fields to m:ss.sss in session data sent to the model."""
     d = dict(data)
-    for key in ("best_lap_time_s", "theoretical_best_time_s"):
+    for key in ("best_lap_time_s",):
         if key in d and isinstance(d[key], (int, float)):
             d[key + "_formatted"] = _fmt_laptime(d[key])
-    if "laps" in d and isinstance(d["laps"], list):
-        d["laps"] = [
+    tb = d.get("theoretical_best")
+    if isinstance(tb, dict):
+        for tb_key in ("actual_best_time_s", "theoretical_best_time_s"):
+            if tb_key in tb and isinstance(tb[tb_key], (int, float)):
+                tb[tb_key + "_formatted"] = _fmt_laptime(tb[tb_key])
+    if "lap_summaries" in d and isinstance(d["lap_summaries"], list):
+        d["lap_summaries"] = [
             {**lap, "lap_time_formatted": _fmt_laptime(lap["lap_time_s"])}
             if "lap_time_s" in lap else lap
-            for lap in d["laps"]
+            for lap in d["lap_summaries"]
         ]
+    if "sector_comparison" in d and isinstance(d["sector_comparison"], list):
+        for sc in d["sector_comparison"]:
+            for sc_key in ("theoretical_best_s", "best_lap_time_s", "time_lost_s"):
+                if sc_key in sc and isinstance(sc[sc_key], (int, float)):
+                    sc[sc_key + "_formatted"] = _fmt_laptime(sc[sc_key])
     return d
 
 
@@ -298,7 +308,6 @@ async def generate_coaching_report(session_summary: dict, api_key: str | None = 
     weather = session_summary.get("weather")
     if weather:
         weather_section = f"""
-
 Weather Conditions during session:
 - Air Temperature: {weather.get('air_temp_f', 'N/A')} °F ({weather.get('air_temp_c', 'N/A')} °C)
 - Humidity: {weather.get('humidity_pct', 'N/A')}%
@@ -308,39 +317,77 @@ Weather Conditions during session:
 - Grip Assessment: {weather.get('grip_assessment', {}).get('rating', 'unknown')}
 - Notes: {'; '.join(weather.get('grip_assessment', {}).get('notes', []))}
 
-Factor these weather conditions into your coaching advice:
-- Note if conditions may affect grip, tire temps, or engine power
-- Suggest adjustments for weather (e.g. more warm-up laps in cold, managing tire deg in heat)
-- If windy, mention which corners are most affected by crosswinds or headwinds
+Factor these weather conditions into your coaching advice where relevant.
 """
 
-    prompt = f"""Analyze this motorsport session data and provide a coaching report.
+    # Build the sector comparison table for the prompt
+    sector_table = ""
+    sector_comparison = session_summary.get("sector_comparison", [])
+    if sector_comparison:
+        lines = ["Sector-by-sector comparison (Best Lap vs Theoretical Best):"]
+        lines.append(f"{'Sector':<25} {'Theor. Best':>11} {'Best Lap':>11} {'Time Lost':>10} {'Fastest In Lap':>15}")
+        lines.append("-" * 75)
+        for sc in sector_comparison:
+            tb_s = sc.get("theoretical_best_s")
+            bl_s = sc.get("best_lap_time_s")
+            lost = sc.get("time_lost_s")
+            from_lap = sc.get("from_lap")
+            tb_str = _fmt_laptime(tb_s) if tb_s is not None else "N/A"
+            bl_str = _fmt_laptime(bl_s) if bl_s is not None else "N/A"
+            lost_str = f"+{lost:.3f}s" if lost is not None and lost > 0 else ("0.000s" if lost is not None else "N/A")
+            from_str = f"Lap {from_lap}" if from_lap is not None else "N/A"
+            lines.append(f"{sc['sector_label']:<25} {tb_str:>11} {bl_str:>11} {lost_str:>10} {from_str:>15}")
+        sector_table = "\n".join(lines)
 
-Session Data:
+    # Build corner suggestions summary
+    corner_section = ""
+    corner_sugg = session_summary.get("corner_suggestions")
+    if corner_sugg and corner_sugg.get("suggestions"):
+        sugg_lines = [f"Data-driven corner improvement suggestions ({corner_sugg['summary']}):"]
+        for s in corner_sugg["suggestions"][:15]:
+            gain = f" (~{s['estimated_gain_s']:.2f}s)" if s.get("estimated_gain_s") else ""
+            sugg_lines.append(f"  [{s['priority']}] {s['suggestion']}{gain}")
+        corner_section = "\n".join(sugg_lines)
+
+    prompt = f"""You are coaching a driver to get their FASTEST LAP closer to their THEORETICAL BEST.
+
+The theoretical best is built by combining the fastest sector from any lap across the session.
+Your job: analyze sector by sector where the best lap lost time compared to the theoretical best,
+explain WHY the driver was slower in those sectors, and give concrete advice to close the gap.
+
+{sector_table}
+
+{corner_section}
+
+Full Session Data (for context — focus your coaching on the sector comparison above):
 {json.dumps(formatted_summary, indent=2)}
 {weather_section}
 The data may include "advanced_metrics_best_lap" with per-corner telemetry analysis:
 - friction_circle: grip utilization % — if low, the driver is leaving grip on the table
-- trail_braking: overlap % and smoothness score — higher is better trail-braking technique
+- trail_braking: overlap % and smoothness — higher is better trail-braking technique
 - throttle: application rate, hesitation (partial throttle time), throttle-on distance after apex
 - steering_balance: understeer/oversteer flags, yaw-to-steer ratio, post-apex corrections
 - wheel_slip: lockup and wheelspin events
 
-Use these metrics to provide professional-level coaching. Distinguish between DRIVER technique issues (fixable with practice), CAR setup issues (need mechanical changes), and being AT THE TIRE LIMIT (already maximizing).
+Use these metrics to explain what the driver did differently in the sectors where time was lost.
 
-CRITICAL: Never reference distances in meters or feet. Always describe locations relative to turn names/numbers (e.g. "going into Turn 3", "coming out of Turn 5", "between Turn 7 and Turn 8").
+CRITICAL RULES:
+- Never reference distances in meters or feet. Always describe locations relative to turn names/numbers.
+- Focus on sectors where the most time was lost (biggest time_lost_s first).
+- Reference which OTHER lap was fastest in that sector so the driver knows what "good" looks like.
+- Distinguish between DRIVER technique issues vs CAR setup issues vs being AT THE TIRE LIMIT.
 
 Provide your response as a JSON object with:
-- "summary": 2-3 sentence overall assessment
+- "summary": 2-3 sentence overall assessment. Mention the gap between best lap and theoretical best and which sectors have the most to gain.
 - "recommendations": array of objects with:
   - "priority": "HIGH", "MEDIUM", or "LOW"
   - "category": "braking", "throttle", "line", "consistency", "setup", "trail_braking", "grip_utilization", "car_balance", "weather", or "general"
   - "corner_id": corner number or null if general
-  - "description": specific, actionable advice referencing turns, not distances (e.g. "Brake later going into Turn 3" not "Brake 15m later at 342m")
+  - "description": specific, actionable advice referencing turns. Mention what the faster sector (from another lap) did better.
   - "estimated_gain_s": estimated time gain in seconds, or null
-- "overall_assessment": 1-2 sentence motivational summary with the key takeaway
+- "overall_assessment": 1-2 sentence motivational summary with the key takeaway — how close the driver is and what to focus on next
 
-Focus on the biggest time gains first. Be specific about turn numbers/names and speeds in mph, never distances in meters or feet."""
+Order recommendations by potential time gain (biggest first). Be specific about turn numbers/names and speeds in mph."""
 
     response = await client.chat.completions.create(
         model="gpt-5.4",

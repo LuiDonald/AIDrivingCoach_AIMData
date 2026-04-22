@@ -510,6 +510,10 @@ def compare_laps(
     brake_b = _interp_channel(df_b, "brake_pressure")
     steer_a = _interp_channel(df_a, "steering_angle")
     steer_b = _interp_channel(df_b, "steering_angle")
+    yaw_a_raw = _interp_channel(df_a, "yaw_rate_body")
+    yaw_a = yaw_a_raw if yaw_a_raw is not None else _interp_channel(df_a, "yaw_rate")
+    yaw_b_raw = _interp_channel(df_b, "yaw_rate_body")
+    yaw_b = yaw_b_raw if yaw_b_raw is not None else _interp_channel(df_b, "yaw_rate")
 
     # Time delta: how much behind is lap_b at each distance point
     # Both traces start at time=0 at distance=0, so delta = time_b - time_a
@@ -540,6 +544,10 @@ def compare_laps(
             pt["steer_a"] = round(float(steer_a[i]), 1)
         if steer_b is not None:
             pt["steer_b"] = round(float(steer_b[i]), 1)
+        if yaw_a is not None:
+            pt["yaw_a"] = round(float(yaw_a[i]), 2)
+        if yaw_b is not None:
+            pt["yaw_b"] = round(float(yaw_b[i]), 2)
         delta_trace.append(pt)
 
     # Corner-by-corner comparison
@@ -580,6 +588,8 @@ def compare_laps(
         available_channels.append("brake")
     if steer_a is not None or steer_b is not None:
         available_channels.append("steering")
+    if yaw_a is not None or yaw_b is not None:
+        available_channels.append("yaw")
 
     return {
         "lap_a": lap_a["lap_number"],

@@ -373,6 +373,12 @@ export async function sendChatMessage(
   });
 }
 
+// --- Session Management ---
+
+export async function clearSession(token: string): Promise<void> {
+  await request(`/api/analyze/${token}`, { method: "DELETE" });
+}
+
 // --- Helpers ---
 
 export function formatLapTime(seconds: number): string {

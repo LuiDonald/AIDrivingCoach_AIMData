@@ -28,6 +28,7 @@ KNOWN_CHANNEL_ALIASES = {
     "GPS_Heading": "heading",
     "GPS Gyro": "yaw_rate",
     "GPS_Gyro": "yaw_rate",
+    "GPS_Yaw_Rate": "yaw_rate",
     "GPS_Slope": "gps_slope",
     "GPS_Nsat": "gps_satellites",
     "GPS_PosAccuracy": "gps_pos_accuracy",
@@ -61,15 +62,20 @@ KNOWN_CHANNEL_ALIASES = {
     "TPS": "throttle_pct",
     "PPS": "pedal_pct",
     "Throttle Position": "throttle_pct",
+    "Throttle_Pos": "throttle_pct",
+    "OBDII_TPS": "obdii_tps",
     # Brakes
     "Brake Pressure": "brake_pressure",
     "BrakePress": "brake_pressure",
     "Brake": "brake_pressure",
+    "Brake_Pressure": "brake_pressure",
     "BrakeSw": "brake_switch",
+    "BrakeSW": "brake_switch",
     "ClutchSw": "clutch_switch",
     # Steering
     "Steering Angle": "steering_angle",
     "SteerAngle": "steering_angle",
+    "Steering_Angle": "steering_angle",
     # Wheel speeds (kph in XRK, mph in AIM CSV — CSV path handles conversion)
     "WheelSpdFL": "wheel_speed_fl_kph",
     "WheelSpdFR": "wheel_speed_fr_kph",
@@ -115,10 +121,14 @@ class ParsedSession:
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Map known AIM channel names to standardized column names."""
     rename_map = {}
+    seen_targets: set[str] = set()
     for col in df.columns:
         stripped = col.strip().strip('"')
         if stripped in KNOWN_CHANNEL_ALIASES:
-            rename_map[col] = KNOWN_CHANNEL_ALIASES[stripped]
+            target = KNOWN_CHANNEL_ALIASES[stripped]
+            if target not in seen_targets:
+                rename_map[col] = target
+                seen_targets.add(target)
 
     df = df.rename(columns=rename_map)
 

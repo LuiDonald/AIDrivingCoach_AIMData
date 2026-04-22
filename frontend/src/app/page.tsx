@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { analyzeFile, AnalysisResult, formatLapTime } from "@/lib/api";
+import { analyzeFile, AnalysisResult, formatLapTime, clearSession } from "@/lib/api";
 import LapTable from "@/components/LapTable";
 import SpeedTraceChart from "@/components/SpeedTraceChart";
 import TrackMap from "@/components/TrackMap";
@@ -77,6 +77,7 @@ export default function Home() {
   );
 
   const handleReset = () => {
+    sessions.forEach((s) => clearSession(s.token).catch(() => {}));
     setSessions([]);
     setActiveSessionIdx(0);
     setSelectedLaps([]);
@@ -86,6 +87,8 @@ export default function Home() {
 
   const removeSession = (idx: number) => {
     setSessions((prev) => {
+      const removed = prev[idx];
+      if (removed) clearSession(removed.token).catch(() => {});
       const next = prev.filter((_, i) => i !== idx);
       if (next.length === 0) {
         handleReset();
