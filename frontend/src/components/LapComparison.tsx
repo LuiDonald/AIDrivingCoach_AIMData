@@ -468,8 +468,8 @@ function ComparisonResults({
               <Tooltip
                 contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
                 labelFormatter={(v) => `${v}m`}
-                formatter={(value: number, name: string) => [
-                  `${value}%`,
+                formatter={(value, name) => [
+                  `${value ?? 0}%`,
                   name === "throttle_a" ? shortA : shortB,
                 ]}
               />
@@ -501,7 +501,7 @@ function ComparisonResults({
               <Tooltip
                 contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
                 labelFormatter={(v) => `${v}m`}
-                formatter={(value: number, name: string) => [
+                formatter={(value, name) => [
                   `${value}`,
                   name === "brake_a" ? shortA : shortB,
                 ]}
@@ -535,7 +535,7 @@ function ComparisonResults({
               <Tooltip
                 contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
                 labelFormatter={(v) => `${v}m`}
-                formatter={(value: number, name: string) => [
+                formatter={(value, name) => [
                   `${value}°`,
                   name === "steer_a" ? shortA : shortB,
                 ]}
@@ -569,7 +569,7 @@ function ComparisonResults({
               <Tooltip
                 contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: "8px" }}
                 labelFormatter={(v) => `${v}m`}
-                formatter={(value: number, name: string) => [
+                formatter={(value, name) => [
                   `${value}°/s`,
                   name === "yaw_a" ? shortA : shortB,
                 ]}
