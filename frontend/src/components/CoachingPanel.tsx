@@ -73,17 +73,20 @@ export default function CoachingPanel({ token, cachedReport }: Props) {
 
   if (!report) return null;
 
+  const recommendations = report.recommendations || [];
+
   return (
     <div className="space-y-4">
       <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/20 rounded-xl p-4">
-        <p className="text-white text-sm leading-relaxed">{report.summary}</p>
+        <p className="text-white text-sm leading-relaxed">{report.summary || report.overall_assessment || "No summary available."}</p>
       </div>
 
+      {recommendations.length > 0 && (
       <div className="space-y-2">
         <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
           Recommendations
         </h4>
-        {report.recommendations.map((rec, i) => {
+        {recommendations.map((rec, i) => {
           const style = PRIORITY_STYLES[rec.priority] || PRIORITY_STYLES.LOW;
           return (
             <div key={i} className={`border rounded-xl p-3 ${style.bg}`}>
@@ -113,10 +116,13 @@ export default function CoachingPanel({ token, cachedReport }: Props) {
           );
         })}
       </div>
+      )}
 
+      {report.overall_assessment && (
       <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
         <p className="text-gray-300 text-sm italic">{report.overall_assessment}</p>
       </div>
+      )}
     </div>
   );
 }

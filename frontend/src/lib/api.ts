@@ -5,6 +5,31 @@ const API_BASE =
     : "http://localhost:8000");
 
 const OPENAI_KEY_STORAGE = "aim_openai_api_key";
+const PROVIDER_STORAGE = "aim_ai_provider";
+const MODEL_STORAGE = "aim_ai_model";
+
+export type AIProvider = "openai" | "deepseek" | "gemini";
+
+export const PROVIDER_MODELS: Record<AIProvider, { label: string; models: { id: string; label: string }[] }> = {
+  openai: {
+    label: "OpenAI",
+    models: [{ id: "gpt-5.4", label: "GPT-5.4" }],
+  },
+  deepseek: {
+    label: "DeepSeek",
+    models: [
+      { id: "deepseek-v4-pro", label: "V4 Pro" },
+      { id: "deepseek-v4-flash", label: "V4 Flash" },
+    ],
+  },
+  gemini: {
+    label: "Gemini",
+    models: [
+      { id: "gemini-3.1-pro-preview", label: "3.1 Pro" },
+      { id: "gemini-3-flash-preview", label: "3 Flash" },
+    ],
+  },
+};
 
 export function getStoredApiKey(): string {
   if (typeof window === "undefined") return "";
@@ -20,15 +45,39 @@ export function setStoredApiKey(key: string) {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export function getStoredProvider(): AIProvider {
+  if (typeof window === "undefined") return "openai";
+  return (localStorage.getItem(PROVIDER_STORAGE) as AIProvider) || "openai";
+}
+
+export function setStoredProvider(provider: AIProvider) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(PROVIDER_STORAGE, provider);
+}
+
+export function getStoredModel(): string {
+  if (typeof window === "undefined") return "gpt-5.4";
+  return localStorage.getItem(MODEL_STORAGE) || PROVIDER_MODELS[getStoredProvider()].models[0].id;
+}
+
+export function setStoredModel(model: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(MODEL_STORAGE, model);
+}
+
+function _aiHeaders(headers: Record<string, string>) {
   const apiKey = getStoredApiKey();
+  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+  headers["X-AI-Provider"] = getStoredProvider();
+  headers["X-AI-Model"] = getStoredModel();
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {};
   if (options?.headers) {
     Object.assign(headers, options.headers);
   }
-  if (apiKey) {
-    headers["X-OpenAI-Key"] = apiKey;
-  }
+  _aiHeaders(headers);
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -41,11 +90,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+export async function validateApiKey(apiKey: string, provider: AIProvider = "openai"): Promise<{ valid: boolean; error?: string }> {
   const res = await fetch(`${API_BASE}/api/settings/validate-key`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, provider }),
   });
   return res.json();
 }
@@ -166,9 +215,8 @@ export async function analyzeFile(file: File): Promise<AnalysisResult> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const apiKey = getStoredApiKey();
   const headers: Record<string, string> = {};
-  if (apiKey) headers["X-OpenAI-Key"] = apiKey;
+  _aiHeaders(headers);
 
   const res = await fetch(`${API_BASE}/api/analyze`, {
     method: "POST",

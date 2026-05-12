@@ -4,7 +4,13 @@ import { useState, useEffect, useCallback } from "react";
 import {
   getStoredApiKey,
   setStoredApiKey,
+  getStoredProvider,
+  setStoredProvider,
+  getStoredModel,
+  setStoredModel,
   validateApiKey,
+  PROVIDER_MODELS,
+  type AIProvider,
 } from "@/lib/api";
 
 interface SettingsModalProps {
@@ -13,6 +19,8 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const [provider, setProvider] = useState<AIProvider>("openai");
+  const [model, setModel] = useState("gpt-5.4");
   const [apiKey, setApiKey] = useState("");
   const [saved, setSaved] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -23,6 +31,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   useEffect(() => {
     if (open) {
+      const storedProvider = getStoredProvider();
+      const storedModel = getStoredModel();
+      setProvider(storedProvider);
+      setModel(storedModel);
       const stored = getStoredApiKey();
       setApiKey(stored);
       setSaved(!!stored);
@@ -33,6 +45,23 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       );
     }
   }, [open]);
+
+  const handleProviderChange = useCallback((newProvider: AIProvider) => {
+    setProvider(newProvider);
+    setStoredProvider(newProvider);
+    const defaultModel = PROVIDER_MODELS[newProvider].models[0].id;
+    setModel(defaultModel);
+    setStoredModel(defaultModel);
+    setApiKey("");
+    setStoredApiKey("");
+    setSaved(false);
+    setStatus({ type: "idle", message: "" });
+  }, []);
+
+  const handleModelChange = useCallback((newModel: string) => {
+    setModel(newModel);
+    setStoredModel(newModel);
+  }, []);
 
   const handleSave = useCallback(async () => {
     const trimmed = apiKey.trim();
@@ -47,7 +76,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     setStatus({ type: "idle", message: "Validating..." });
 
     try {
-      const result = await validateApiKey(trimmed);
+      const result = await validateApiKey(trimmed, provider);
       if (result.valid) {
         setStoredApiKey(trimmed);
         setSaved(true);
@@ -63,7 +92,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     } finally {
       setValidating(false);
     }
-  }, [apiKey]);
+  }, [apiKey, provider]);
 
   const handleClear = useCallback(() => {
     setApiKey("");
@@ -74,7 +103,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   if (!open) return null;
 
-  const masked = saved && apiKey ? `sk-...${apiKey.slice(-4)}` : "";
+  const masked = saved && apiKey ? `...${apiKey.slice(-4)}` : "";
+  const providerConfig = PROVIDER_MODELS[provider];
+  const keyPlaceholder = provider === "openai" ? "sk-..." : "Enter your API key";
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -102,14 +133,55 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
+          {/* Provider selector */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              OpenAI API Key
+              AI Provider
+            </label>
+            <div className="flex gap-2">
+              {(Object.keys(PROVIDER_MODELS) as AIProvider[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => handleProviderChange(p)}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                    provider === p
+                      ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                      : "bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  {PROVIDER_MODELS[p].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Model selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Model
+            </label>
+            <select
+              value={model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {providerConfig.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* API key */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              {providerConfig.label} API Key
             </label>
             <p className="text-xs text-gray-500 mb-3">
               Your key is stored only in this browser&apos;s local storage and
-              sent directly to OpenAI. It is never saved on the server.
+              sent directly to {providerConfig.label}. It is never saved on the server.
             </p>
 
             {saved && !validating ? (
@@ -140,7 +212,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                     setStatus({ type: "idle", message: "" });
                   }}
                   onKeyDown={(e) => e.key === "Enter" && handleSave()}
-                  placeholder="sk-..."
+                  placeholder={keyPlaceholder}
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                   autoFocus
                 />

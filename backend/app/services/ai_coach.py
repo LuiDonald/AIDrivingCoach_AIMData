@@ -1,9 +1,44 @@
 """AI driving coach: auto-analysis and conversational chat with function calling."""
 
 import json
+import re
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+
+
+def _extract_json(text: str) -> dict:
+    """Extract a JSON object from model output, handling code fences and extra text."""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+    cleaned = cleaned.strip()
+
+    try:
+        result = json.loads(cleaned)
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            return result[0]
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find the outermost { ... } in the text
+    start = cleaned.find("{")
+    if start != -1:
+        depth = 0
+        for i in range(start, len(cleaned)):
+            if cleaned[i] == "{":
+                depth += 1
+            elif cleaned[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(cleaned[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    raise json.JSONDecodeError("No valid JSON object found", cleaned, 0)
 
 
 def _fmt_laptime(seconds: float) -> str:
@@ -288,19 +323,40 @@ def _format_session_times(data: dict) -> dict:
     return d
 
 
-def _get_client(api_key: str | None = None) -> AsyncOpenAI:
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+DEFAULT_MODEL = "gpt-5.4"
+
+PROVIDER_CONFIG = {
+    "deepseek": ("deepseek_api_key", DEEPSEEK_BASE_URL, "DeepSeek"),
+    "gemini": ("gemini_api_key", GEMINI_BASE_URL, "Gemini"),
+}
+
+
+def _get_client(api_key: str | None = None, provider: str = "openai") -> AsyncOpenAI:
+    if provider in PROVIDER_CONFIG:
+        settings_attr, base_url, label = PROVIDER_CONFIG[provider]
+        key = api_key or getattr(settings, settings_attr, "")
+        if not key:
+            raise ValueError(f"{label} API key not configured. Please set it in Settings.")
+        return AsyncOpenAI(api_key=key, base_url=base_url)
     key = api_key or settings.openai_api_key
     if not key:
         raise ValueError("OpenAI API key not configured. Please set it in Settings.")
     return AsyncOpenAI(api_key=key)
 
 
-async def generate_coaching_report(session_summary: dict, api_key: str | None = None) -> dict:
+async def generate_coaching_report(
+    session_summary: dict,
+    api_key: str | None = None,
+    provider: str = "openai",
+    model: str = DEFAULT_MODEL,
+) -> dict:
     """Generate an automatic coaching report from session analysis data.
 
     This is Mode 1 -- called after file upload and analysis, no user question needed.
     """
-    client = _get_client(api_key)
+    client = _get_client(api_key, provider)
 
     formatted_summary = _format_session_times(session_summary)
 
@@ -390,7 +446,7 @@ Provide your response as a JSON object with:
 Order recommendations by potential time gain (biggest first). Be specific about turn numbers/names and speeds in mph."""
 
     response = await client.chat.completions.create(
-        model="gpt-5.4",
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -402,8 +458,8 @@ Order recommendations by potential time gain (biggest first). Be specific about 
 
     text = response.choices[0].message.content.strip()
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return _extract_json(text)
+    except (json.JSONDecodeError, ValueError):
         return {
             "summary": text,
             "recommendations": [],
@@ -411,13 +467,18 @@ Order recommendations by potential time gain (biggest first). Be specific about 
         }
 
 
-async def generate_comparison_coaching(comparison_data: dict, api_key: str | None = None) -> dict:
+async def generate_comparison_coaching(
+    comparison_data: dict,
+    api_key: str | None = None,
+    provider: str = "openai",
+    model: str = DEFAULT_MODEL,
+) -> dict:
     """Generate AI coaching analysis explaining why one lap is faster than another.
 
     Takes the full comparison result (delta trace summary, corner-by-corner breakdown)
     and produces actionable coaching insights.
     """
-    client = _get_client(api_key)
+    client = _get_client(api_key, provider)
 
     # Summarize the delta trace to key sections instead of sending all 500 points
     trace = comparison_data.get("delta_trace", [])
@@ -492,7 +553,7 @@ Provide your response as a JSON object with:
 Focus on practical, actionable insights. Reference specific turns and speeds, never distances in meters or feet."""
 
     response = await client.chat.completions.create(
-        model="gpt-5.4",
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -504,8 +565,8 @@ Focus on practical, actionable insights. Reference specific turns and speeds, ne
 
     text = response.choices[0].message.content.strip()
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return _extract_json(text)
+    except (json.JSONDecodeError, ValueError):
         return {
             "headline": text[:200],
             "key_findings": [],
@@ -521,6 +582,8 @@ async def chat_with_coach(
     session_context: dict,
     tool_executor,
     api_key: str | None = None,
+    provider: str = "openai",
+    model: str = DEFAULT_MODEL,
 ) -> dict:
     """Handle a conversational chat message with function calling.
 
@@ -534,8 +597,10 @@ async def chat_with_coach(
         session_context: Brief session metadata for the system prompt
         tool_executor: Async callable that executes tool functions and returns results
         api_key: Optional OpenAI API key override
+        provider: AI provider ("openai" or "deepseek")
+        model: Model identifier to use
     """
-    client = _get_client(api_key)
+    client = _get_client(api_key, provider)
 
     context_str = json.dumps(session_context, indent=2)
     system = (
@@ -556,7 +621,7 @@ async def chat_with_coach(
 
     for _ in range(max_rounds):
         response = await client.chat.completions.create(
-            model="gpt-5.4",
+            model=model,
             messages=messages,
             tools=COACHING_TOOLS,
             tool_choice="auto",

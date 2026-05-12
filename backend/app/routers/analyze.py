@@ -471,6 +471,8 @@ async def cross_compare_coaching(
     token_a: str = Query(...), lap_a: int = Query(...),
     token_b: str = Query(...), lap_b: int = Query(...),
     x_openai_key: str | None = Header(None),
+    x_ai_provider: str | None = Header(None),
+    x_ai_model: str | None = Header(None),
 ):
     """AI coaching for cross-file lap comparison."""
     parsed_a, laps_a, corners_a = _cache_get(token_a)
@@ -493,7 +495,12 @@ async def cross_compare_coaching(
     result["advanced_metrics_lap_a"] = adv_a
     result["advanced_metrics_lap_b"] = adv_b
 
-    return await generate_comparison_coaching(result, api_key=x_openai_key or None)
+    return await generate_comparison_coaching(
+        result,
+        api_key=x_openai_key or None,
+        provider=x_ai_provider or "openai",
+        model=x_ai_model or "gpt-5.4",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +551,8 @@ async def compare_two_laps(token: str, lap_a: int = Query(...), lap_b: int = Que
 async def compare_coaching(
     token: str, lap_a: int = Query(...), lap_b: int = Query(...),
     x_openai_key: str | None = Header(None),
+    x_ai_provider: str | None = Header(None),
+    x_ai_model: str | None = Header(None),
 ):
     parsed, laps, corners = _cache_get(token)
     lap_a_data = next((l for l in laps if l["lap_number"] == lap_a), None)
@@ -563,7 +572,12 @@ async def compare_coaching(
     result["advanced_metrics_lap_a"] = adv_a
     result["advanced_metrics_lap_b"] = adv_b
 
-    return await generate_comparison_coaching(result, api_key=x_openai_key or None)
+    return await generate_comparison_coaching(
+        result,
+        api_key=x_openai_key or None,
+        provider=x_ai_provider or "openai",
+        model=x_ai_model or "gpt-5.4",
+    )
 
 
 @router.get("/{token}/track-map")
@@ -647,7 +661,12 @@ async def advanced_metrics(token: str, lap_number: int = Query(...)):
 # ---------------------------------------------------------------------------
 
 @router.post("/{token}/coaching-report")
-async def coaching_report(token: str, x_openai_key: str | None = Header(None)):
+async def coaching_report(
+    token: str,
+    x_openai_key: str | None = Header(None),
+    x_ai_provider: str | None = Header(None),
+    x_ai_model: str | None = Header(None),
+):
     parsed, laps, corners = _cache_get(token)
     known = _match_track_with_parsed(parsed)
     track_name = known["full_name"] if known else parsed.metadata.get("Venue") or "Unknown"
@@ -708,11 +727,22 @@ async def coaching_report(token: str, x_openai_key: str | None = Header(None)):
         "weather": weather,
     }
 
-    return await generate_coaching_report(summary_data, api_key=x_openai_key or None)
+    return await generate_coaching_report(
+        summary_data,
+        api_key=x_openai_key or None,
+        provider=x_ai_provider or "openai",
+        model=x_ai_model or "gpt-5.4",
+    )
 
 
 @router.post("/{token}/chat")
-async def chat(token: str, request: dict, x_openai_key: str | None = Header(None)):
+async def chat(
+    token: str,
+    request: dict,
+    x_openai_key: str | None = Header(None),
+    x_ai_provider: str | None = Header(None),
+    x_ai_model: str | None = Header(None),
+):
     parsed, laps, corners = _cache_get(token)
     known = _match_track_with_parsed(parsed)
     track_name = known["full_name"] if known else parsed.metadata.get("Venue") or "Unknown"
@@ -835,6 +865,8 @@ async def chat(token: str, request: dict, x_openai_key: str | None = Header(None
         session_context=context,
         tool_executor=executor,
         api_key=x_openai_key or None,
+        provider=x_ai_provider or "openai",
+        model=x_ai_model or "gpt-5.4",
     )
 
     return {"message": result["message"], "tool_calls_made": result.get("tool_calls_made", [])}
