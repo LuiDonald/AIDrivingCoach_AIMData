@@ -208,7 +208,16 @@ def parse_xrk(file_path: str) -> ParsedSession:
             "libxrk is required for .xrk/.xrz files. Install with: pip install libxrk"
         )
 
-    log = aim_xrk(file_path)
+    try:
+        log = aim_xrk(file_path)
+    except Exception as e:
+        if "Lap gap" in str(e) or "lap gap" in str(e):
+            raise ValueError(
+                f"File has non-sequential lap numbering ({e}). "
+                "Rebuild the backend image — the Dockerfile patches libxrk to skip these. "
+                "Make sure LIBXRK_BACKEND is unset (the Rust backend still validates strictly)."
+            ) from e
+        raise
 
     raw_channels = list(log.channels.keys())
 

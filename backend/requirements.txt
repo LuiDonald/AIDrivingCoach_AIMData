@@ -1,7 +1,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
 python-multipart>=0.0.18
-libxrk>=0.10.1
+libxrk>=0.12.0
 pandas>=2.2.0
 numpy>=2.1.0
 scipy>=1.14.0
